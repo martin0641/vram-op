@@ -68,6 +68,7 @@ internal sealed class MainForm : Form
     private bool _hasShownTrayTip;
     private bool _hostListDirty = true;
     private bool _isMovingOrSizing;
+    private bool _updatingProcessRows;
     private Guid? _lastRenderedProcessHostId;
     private string _lastRenderedProcessSignature = string.Empty;
     private string _lastStatusText = string.Empty;
@@ -325,8 +326,8 @@ internal sealed class MainForm : Form
         _actionsPanel.Controls.Add(_disableServiceButton);
         _actionsPanel.Controls.Add(_startServiceButton);
         _actionsPanel.Controls.Add(_stopServiceButton);
-        _actionsPanel.Controls.Add(_killParentButton);
         _actionsPanel.Controls.Add(_killButton);
+        _actionsPanel.Controls.Add(_killParentButton);
 
         _dashboardLayout.Controls.Add(metrics, 0, 0);
         _dashboardLayout.Controls.Add(_dashboardSplit, 0, 1);
@@ -969,7 +970,13 @@ internal sealed class MainForm : Form
         _dashboardButton.Click += (_, _) => ShowDashboardPage();
         _settingsButton.Click += (_, _) => ShowSettingsPage();
         _remoteListBox.SelectedIndexChanged += (_, _) => PopulateRemoteEditorFromSelection();
-        _processGrid.SelectionChanged += (_, _) => UpdateActionButtons();
+        _processGrid.SelectionChanged += (_, _) =>
+        {
+            if (!_updatingProcessRows)
+            {
+                UpdateActionButtons();
+            }
+        };
     }
 
     private void LoadSettingsIntoControls()
@@ -1386,27 +1393,36 @@ internal sealed class MainForm : Form
             .Select(row => row.ProcessId)
             .FirstOrDefault();
 
+        _updatingProcessRows = true;
         _processGrid.SuspendLayout();
-        _processBinding.DataSource = rows.ToList();
-        _lastRenderedProcessSignature = signature;
-
-        _processGrid.ClearSelection();
-        _processGrid.CurrentCell = null;
-
-        if (selectedPid != 0)
+        try
         {
-            foreach (DataGridViewRow gridRow in _processGrid.Rows)
+            _processBinding.DataSource = rows.ToList();
+            _lastRenderedProcessSignature = signature;
+
+            _processGrid.ClearSelection();
+            _processGrid.CurrentCell = null;
+
+            if (selectedPid != 0)
             {
-                if (gridRow.DataBoundItem is GpuProcessInfo process && process.ProcessId == selectedPid)
+                foreach (DataGridViewRow gridRow in _processGrid.Rows)
                 {
-                    _processGrid.CurrentCell = gridRow.Cells[0];
-                    gridRow.Selected = true;
-                    break;
+                    if (gridRow.DataBoundItem is GpuProcessInfo process && process.ProcessId == selectedPid)
+                    {
+                        _processGrid.CurrentCell = gridRow.Cells[0];
+                        gridRow.Selected = true;
+                        break;
+                    }
                 }
             }
         }
+        finally
+        {
+            _processGrid.ResumeLayout();
+            _updatingProcessRows = false;
+        }
 
-        _processGrid.ResumeLayout();
+        UpdateActionButtons();
     }
 
     private void UpdateMetricCards(HostSnapshot? host)
@@ -1737,23 +1753,49 @@ internal sealed class MainForm : Form
             .OfType<GpuProcessInfo>()
             .FirstOrDefault();
 
-        _killButton.Enabled = row?.CanKill == true;
-        _killParentButton.Visible = row?.ParentProcessId is not null;
-        _killParentButton.Enabled = _killParentButton.Visible;
+        var layoutChanged = false;
+        SetEnabledIfChanged(_killButton, row?.CanKill == true);
+        var showParent = row?.ParentProcessId is not null;
+        layoutChanged |= SetVisibleIfChanged(_killParentButton, showParent);
+        SetEnabledIfChanged(_killParentButton, showParent);
 
         var hasService = !string.IsNullOrWhiteSpace(row?.ServiceName);
         var serviceStopped = string.Equals(row?.ServiceState, "Stopped", StringComparison.OrdinalIgnoreCase);
         var serviceDisabled = string.Equals(row?.ServiceStartMode, "Disabled", StringComparison.OrdinalIgnoreCase);
 
-        _stopServiceButton.Visible = hasService;
-        _startServiceButton.Visible = hasService;
-        _disableServiceButton.Visible = hasService;
-        _enableServiceButton.Visible = hasService;
-        _stopServiceButton.Enabled = hasService && !serviceStopped;
-        _startServiceButton.Enabled = hasService && serviceStopped && !serviceDisabled;
-        _disableServiceButton.Enabled = hasService && !serviceDisabled;
-        _enableServiceButton.Enabled = hasService && serviceDisabled;
-        _actionsPanel.PerformLayout();
+        layoutChanged |= SetVisibleIfChanged(_stopServiceButton, hasService);
+        layoutChanged |= SetVisibleIfChanged(_startServiceButton, hasService);
+        layoutChanged |= SetVisibleIfChanged(_disableServiceButton, hasService);
+        layoutChanged |= SetVisibleIfChanged(_enableServiceButton, hasService);
+        SetEnabledIfChanged(_stopServiceButton, hasService && !serviceStopped);
+        SetEnabledIfChanged(_startServiceButton, hasService && serviceStopped && !serviceDisabled);
+        SetEnabledIfChanged(_disableServiceButton, hasService && !serviceDisabled);
+        SetEnabledIfChanged(_enableServiceButton, hasService && serviceDisabled);
+
+        if (layoutChanged)
+        {
+            _actionsPanel.PerformLayout();
+            ApplyResponsiveLayout();
+        }
+    }
+
+    private static bool SetVisibleIfChanged(Control control, bool visible)
+    {
+        if (control.Visible == visible)
+        {
+            return false;
+        }
+
+        control.Visible = visible;
+        return true;
+    }
+
+    private static void SetEnabledIfChanged(Control control, bool enabled)
+    {
+        if (control.Enabled != enabled)
+        {
+            control.Enabled = enabled;
+        }
     }
 
     private void UpdateListenerStatus()
