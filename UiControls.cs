@@ -293,7 +293,8 @@ internal sealed class MetricCard : Control
         e.Graphics.FillPath(fill, path);
         e.Graphics.DrawPath(border, path);
 
-        var compact = Height < 128 || Width < 220;
+        var highDpi = DeviceDpi >= 144 || e.Graphics.DpiY >= 144 || Font.Height >= 20;
+        var compact = highDpi || Height < 128 || Width < 220;
         var pad = compact ? Math.Min(12, Math.Max(8, Font.Height / 2)) : Math.Max(12, Font.Height);
         var inner = Rectangle.Inflate(rect, -pad, -pad);
         var barHeight = compact ? Math.Max(6, Math.Min(10, Font.Height / 3)) : Math.Max(6, Font.Height / 2);
