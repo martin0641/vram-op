@@ -24,6 +24,11 @@ internal sealed class MainForm : Form
     private readonly Panel _settingsPage = new BufferedPanel();
     private readonly BufferedFlowLayoutPanel _hostCardsPanel = new();
     private readonly DataGridView _processGrid = new BufferedDataGridView();
+    private readonly BufferedTableLayoutPanel _rootLayout = new();
+    private readonly BufferedTableLayoutPanel _headerLayout = new();
+    private readonly TableLayoutPanel _dashboardLayout = new();
+    private readonly FlowLayoutPanel _actionsPanel = new();
+    private readonly SplitContainer _dashboardSplit = new();
     private readonly MetricCard _cpuCard = new() { Title = "CPU", AccentColor = AppTheme.Accent };
     private readonly MetricCard _ramCard = new() { Title = "RAM", AccentColor = AppTheme.Good };
     private readonly MetricCard _gpuCard = new() { Title = "GPU", AccentColor = AppTheme.Warning };
@@ -32,13 +37,15 @@ internal sealed class MainForm : Form
     private readonly Label _listenerStatusLabel = new BufferedLabel();
     private readonly MaskedTextBox _intervalBox = new("9999");
     private readonly RoundedButton _killButton = new() { Text = "Kill selected", Width = 132 };
-    private readonly RoundedButton _killParentButton = new() { Text = "End parent", Width = 124 };
-    private readonly RoundedButton _stopServiceButton = new() { Text = "Stop svc", Width = 96 };
-    private readonly RoundedButton _startServiceButton = new() { Text = "Start svc", Width = 96 };
-    private readonly RoundedButton _disableServiceButton = new() { Text = "Disable svc", Width = 112 };
-    private readonly RoundedButton _enableServiceButton = new() { Text = "Enable svc", Width = 104 };
+    private readonly RoundedButton _killParentButton = new() { Text = "End parent", Width = 124, Visible = false };
+    private readonly RoundedButton _stopServiceButton = new() { Text = "Stop svc", Width = 96, Visible = false };
+    private readonly RoundedButton _startServiceButton = new() { Text = "Start svc", Width = 96, Visible = false };
+    private readonly RoundedButton _disableServiceButton = new() { Text = "Disable svc", Width = 112, Visible = false };
+    private readonly RoundedButton _enableServiceButton = new() { Text = "Enable svc", Width = 104, Visible = false };
     private readonly RoundedButton _dashboardButton = new() { Text = "Dashboard", Width = 160 };
     private readonly RoundedButton _settingsButton = new() { Text = "Settings", Width = 140 };
+    private readonly RoundedButton _refreshButton = new() { Text = "Refresh now", Width = 132 };
+    private readonly RoundedButton _hideButton = new() { Text = "Hide to tray", Width = 132 };
     private readonly CheckBox _listenerEnabledBox = new();
     private readonly CheckBox _confirmKillsBox = new();
     private readonly NumericUpDown _listenerPortBox = new();
@@ -104,48 +111,56 @@ internal sealed class MainForm : Form
         Font = new Font("Segoe UI", 9F);
         AutoScaleMode = AutoScaleMode.Font;
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(1120, 760);
-        Size = new Size(1320, 860);
+        ApplyInitialWindowBounds();
 
         ConfigureTrayIcon();
 
-        var root = new BufferedTableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = AppTheme.Background,
-            Padding = new Padding(14),
-            ColumnCount = 1,
-            RowCount = 3
-        };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+        _rootLayout.Dock = DockStyle.Fill;
+        _rootLayout.BackColor = AppTheme.Background;
+        _rootLayout.Padding = new Padding(14);
+        _rootLayout.ColumnCount = 1;
+        _rootLayout.RowCount = 3;
+        _rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
+        _rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        _rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
 
-        root.Controls.Add(BuildHeader(), 0, 0);
-        root.Controls.Add(BuildPages(), 0, 1);
-        root.Controls.Add(_statusLabel, 0, 2);
+        _rootLayout.Controls.Add(BuildHeader(), 0, 0);
+        _rootLayout.Controls.Add(BuildPages(), 0, 1);
+        _rootLayout.Controls.Add(_statusLabel, 0, 2);
 
         _statusLabel.Dock = DockStyle.Fill;
         _statusLabel.ForeColor = AppTheme.MutedText;
         _statusLabel.TextAlign = ContentAlignment.MiddleLeft;
         SetStatusText("Starting");
 
-        Controls.Add(root);
+        Controls.Add(_rootLayout);
+        ApplyResponsiveLayout();
+    }
+
+    private void ApplyInitialWindowBounds()
+    {
+        var workingArea = Screen.FromPoint(Cursor.Position).WorkingArea;
+        var availableWidth = Math.Max(760, workingArea.Width - 48);
+        var availableHeight = Math.Max(520, workingArea.Height - 48);
+
+        MinimumSize = new Size(
+            Math.Min(980, availableWidth),
+            Math.Min(620, availableHeight));
+        Size = new Size(
+            Math.Max(MinimumSize.Width, Math.Min(1320, availableWidth)),
+            Math.Max(MinimumSize.Height, Math.Min(860, availableHeight)));
     }
 
     private Control BuildHeader()
     {
-        var header = new BufferedTableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 3,
-            RowCount = 2,
-            BackColor = AppTheme.Background
-        };
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 340));
-        header.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
-        header.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        _headerLayout.Dock = DockStyle.Fill;
+        _headerLayout.ColumnCount = 2;
+        _headerLayout.RowCount = 2;
+        _headerLayout.BackColor = AppTheme.Background;
+        _headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        _headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 340));
+        _headerLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
+        _headerLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
 
         var title = new Label
         {
@@ -171,11 +186,11 @@ internal sealed class MainForm : Form
         nav.Controls.Add(_settingsButton);
         nav.Controls.Add(_dashboardButton);
 
-        header.Controls.Add(title, 0, 0);
-        header.Controls.Add(_listenerStatusLabel, 0, 1);
-        header.Controls.Add(nav, 1, 0);
-        header.SetRowSpan(nav, 2);
-        return header;
+        _headerLayout.Controls.Add(title, 0, 0);
+        _headerLayout.Controls.Add(_listenerStatusLabel, 0, 1);
+        _headerLayout.Controls.Add(nav, 1, 0);
+        _headerLayout.SetRowSpan(nav, 2);
+        return _headerLayout;
     }
 
     private Control BuildPages()
@@ -202,16 +217,13 @@ internal sealed class MainForm : Form
 
     private void BuildDashboardPage()
     {
-        var dashboard = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 3,
-            BackColor = AppTheme.Background
-        };
-        dashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, 176));
-        dashboard.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        dashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
+        _dashboardLayout.Dock = DockStyle.Fill;
+        _dashboardLayout.ColumnCount = 1;
+        _dashboardLayout.RowCount = 3;
+        _dashboardLayout.BackColor = AppTheme.Background;
+        _dashboardLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 176));
+        _dashboardLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        _dashboardLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
 
         var metrics = new TableLayoutPanel
         {
@@ -236,23 +248,13 @@ internal sealed class MainForm : Form
             card.Dock = DockStyle.Fill;
         }
 
-        var split = new SplitContainer
+        _dashboardSplit.Dock = DockStyle.Fill;
+        _dashboardSplit.BackColor = AppTheme.Background;
+        _dashboardSplit.SizeChanged += (_, _) =>
         {
-            Dock = DockStyle.Fill,
-            BackColor = AppTheme.Background
-        };
-        split.SizeChanged += (_, _) =>
-        {
-            const int panel1MinSize = 320;
-            const int panel2MinSize = 520;
-
-            if (split.Width <= panel1MinSize + panel2MinSize)
-            {
-                return;
-            }
-
-            var desired = Math.Min(430, split.Width - panel2MinSize);
-            split.SplitterDistance = Math.Max(panel1MinSize, desired);
+            AdjustDashboardSplit();
+            UpdateHostCards();
+            UpdateProcessGridColumns();
         };
 
         var hostPanel = new RoundedPanel
@@ -277,35 +279,30 @@ internal sealed class MainForm : Form
         ConfigureProcessGrid();
         processPanel.Controls.Add(_processGrid);
 
-        split.Panel1.Controls.Add(hostPanel);
-        split.Panel2.Controls.Add(processPanel);
+        _dashboardSplit.Panel1.Controls.Add(hostPanel);
+        _dashboardSplit.Panel2.Controls.Add(processPanel);
 
-        var actions = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.RightToLeft,
-            WrapContents = false,
-            BackColor = AppTheme.Background,
-            AutoScroll = true,
-            Padding = new Padding(0, 8, 0, 0)
-        };
-        var refreshButton = new RoundedButton { Text = "Refresh now", Width = 132 };
-        var hideButton = new RoundedButton { Text = "Hide to tray", Width = 132 };
-        refreshButton.Click += async (_, _) => await RefreshAllHostsAsync();
-        hideButton.Click += (_, _) => HideToTray(showTip: true);
-        actions.Controls.Add(hideButton);
-        actions.Controls.Add(refreshButton);
-        actions.Controls.Add(_enableServiceButton);
-        actions.Controls.Add(_disableServiceButton);
-        actions.Controls.Add(_startServiceButton);
-        actions.Controls.Add(_stopServiceButton);
-        actions.Controls.Add(_killParentButton);
-        actions.Controls.Add(_killButton);
+        _actionsPanel.Dock = DockStyle.Fill;
+        _actionsPanel.FlowDirection = FlowDirection.RightToLeft;
+        _actionsPanel.WrapContents = true;
+        _actionsPanel.BackColor = AppTheme.Background;
+        _actionsPanel.AutoScroll = false;
+        _actionsPanel.Padding = new Padding(0, 8, 0, 0);
+        _refreshButton.Click += async (_, _) => await RefreshAllHostsAsync();
+        _hideButton.Click += (_, _) => HideToTray(showTip: true);
+        _actionsPanel.Controls.Add(_hideButton);
+        _actionsPanel.Controls.Add(_refreshButton);
+        _actionsPanel.Controls.Add(_enableServiceButton);
+        _actionsPanel.Controls.Add(_disableServiceButton);
+        _actionsPanel.Controls.Add(_startServiceButton);
+        _actionsPanel.Controls.Add(_stopServiceButton);
+        _actionsPanel.Controls.Add(_killParentButton);
+        _actionsPanel.Controls.Add(_killButton);
 
-        dashboard.Controls.Add(metrics, 0, 0);
-        dashboard.Controls.Add(split, 0, 1);
-        dashboard.Controls.Add(actions, 0, 2);
-        _dashboardPage.Controls.Add(dashboard);
+        _dashboardLayout.Controls.Add(metrics, 0, 0);
+        _dashboardLayout.Controls.Add(_dashboardSplit, 0, 1);
+        _dashboardLayout.Controls.Add(_actionsPanel, 0, 2);
+        _dashboardPage.Controls.Add(_dashboardLayout);
     }
 
     private void ConfigureProcessGrid()
@@ -386,6 +383,114 @@ internal sealed class MainForm : Form
         column.DefaultCellStyle.Alignment = alignment;
         column.HeaderCell.Style.Alignment = headerAlignment ?? DataGridViewContentAlignment.MiddleLeft;
         _processGrid.Columns.Add(column);
+    }
+
+    private void ApplyResponsiveLayout()
+    {
+        if (_rootLayout.RowStyles.Count == 0 || _dashboardLayout.RowStyles.Count == 0)
+        {
+            return;
+        }
+
+        var compactWidth = ClientSize.Width < 980;
+        var compactHeight = ClientSize.Height < 720;
+        var padding = compactWidth ? 10 : 14;
+        _rootLayout.Padding = new Padding(padding);
+        _rootLayout.RowStyles[0].Height = compactHeight ? 76 : 104;
+        _rootLayout.RowStyles[2].Height = compactHeight ? 32 : 38;
+        _headerLayout.RowStyles[0].Height = compactHeight ? 44 : 56;
+        _headerLayout.RowStyles[1].Height = compactHeight ? 30 : 40;
+        _dashboardLayout.RowStyles[0].Height = compactHeight ? 136 : 176;
+        _dashboardLayout.RowStyles[2].Height = compactWidth ? 54 : 64;
+
+        FitButtonWidths();
+        AdjustDashboardSplit();
+        UpdateProcessGridColumns();
+        UpdateHostCards();
+    }
+
+    private void FitButtonWidths()
+    {
+        FitButton(_dashboardButton, 120);
+        FitButton(_settingsButton, 112);
+        FitButton(_killButton, 118);
+        FitButton(_killParentButton, 116);
+        FitButton(_stopServiceButton, 88);
+        FitButton(_startServiceButton, 88);
+        FitButton(_disableServiceButton, 104);
+        FitButton(_enableServiceButton, 96);
+        FitButton(_refreshButton, 118);
+        FitButton(_hideButton, 112);
+
+        if (_headerLayout.ColumnStyles.Count > 1)
+        {
+            var navWidth = _dashboardButton.Width + _settingsButton.Width + 32;
+            _headerLayout.ColumnStyles[1].Width = Math.Min(Math.Max(260, navWidth), Math.Max(240, ClientSize.Width / 2));
+        }
+    }
+
+    private static void FitButton(RoundedButton button, int minimumWidth)
+    {
+        var measured = TextRenderer.MeasureText(button.Text, button.Font).Width + 34;
+        button.Width = Math.Max(minimumWidth, measured);
+    }
+
+    private void AdjustDashboardSplit()
+    {
+        if (_dashboardSplit.Width <= 0)
+        {
+            return;
+        }
+
+        var compact = _dashboardSplit.Width < 920;
+        var hostMin = compact ? 190 : 280;
+        var processMin = compact ? 340 : 520;
+        _dashboardSplit.Panel1MinSize = Math.Min(hostMin, Math.Max(80, _dashboardSplit.Width - 120));
+        _dashboardSplit.Panel2MinSize = Math.Min(processMin, Math.Max(160, _dashboardSplit.Width - _dashboardSplit.Panel1MinSize - _dashboardSplit.SplitterWidth));
+
+        var maxDistance = _dashboardSplit.Width - _dashboardSplit.SplitterWidth - _dashboardSplit.Panel2MinSize;
+        if (maxDistance <= _dashboardSplit.Panel1MinSize)
+        {
+            return;
+        }
+
+        var desired = compact
+            ? Math.Min(260, Math.Max(_dashboardSplit.Panel1MinSize, _dashboardSplit.Width / 3))
+            : Math.Min(430, _dashboardSplit.Width - _dashboardSplit.Panel2MinSize);
+        _dashboardSplit.SplitterDistance = Math.Clamp(desired, _dashboardSplit.Panel1MinSize, maxDistance);
+    }
+
+    private void UpdateProcessGridColumns()
+    {
+        if (_processGrid.Columns.Count == 0)
+        {
+            return;
+        }
+
+        var compact = _processGrid.ClientSize.Width < 980;
+        _processGrid.ScrollBars = ScrollBars.Vertical;
+
+        ConfigureProcessColumn(nameof(GpuProcessInfo.ProcessName), compact ? DataGridViewAutoSizeColumnMode.Fill : DataGridViewAutoSizeColumnMode.AllCells, compact ? 38 : 100, compact ? 110 : 80, visible: true);
+        ConfigureProcessColumn(nameof(GpuProcessInfo.ProcessId), DataGridViewAutoSizeColumnMode.AllCells, 100, 54, visible: true);
+        ConfigureProcessColumn(nameof(GpuProcessInfo.LocalVramBytes), DataGridViewAutoSizeColumnMode.AllCells, 100, 72, visible: true);
+        ConfigureProcessColumn(nameof(GpuProcessInfo.SharedBytes), DataGridViewAutoSizeColumnMode.AllCells, 100, 78, visible: true);
+        ConfigureProcessColumn(nameof(GpuProcessInfo.RestartBehavior), compact ? DataGridViewAutoSizeColumnMode.Fill : DataGridViewAutoSizeColumnMode.AllCells, compact ? 36 : 100, compact ? 92 : 90, visible: true);
+        ConfigureProcessColumn(nameof(GpuProcessInfo.WindowTitle), DataGridViewAutoSizeColumnMode.Fill, 65, 90, visible: !compact);
+        ConfigureProcessColumn(nameof(GpuProcessInfo.Notes), DataGridViewAutoSizeColumnMode.Fill, 35, 90, visible: !compact);
+    }
+
+    private void ConfigureProcessColumn(string name, DataGridViewAutoSizeColumnMode mode, float fillWeight, int minimumWidth, bool visible)
+    {
+        if (!_processGrid.Columns.Contains(name))
+        {
+            return;
+        }
+
+        var column = _processGrid.Columns[name];
+        column.Visible = visible;
+        column.MinimumWidth = minimumWidth;
+        column.AutoSizeMode = mode;
+        column.FillWeight = fillWeight;
     }
 
     private void BuildSettingsPage()
@@ -670,7 +775,10 @@ internal sealed class MainForm : Form
             if (WindowState == FormWindowState.Minimized)
             {
                 HideToTray(showTip: true);
+                return;
             }
+
+            ApplyResponsiveLayout();
         };
 
         FormClosing += OnFormClosing;
@@ -1046,8 +1154,14 @@ internal sealed class MainForm : Form
 
             card.Snapshot = snapshot;
             card.IsSelected = snapshot.Id == _selectedHostId;
-            card.Height = Math.Max(208, Font.Height * 12);
-            card.Width = Math.Max(300, _hostCardsPanel.ClientSize.Width - 32);
+            card.Width = Math.Max(170, _hostCardsPanel.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 8);
+            var preferredHeight = Math.Max(178, card.Font.Height * 7 + 68);
+            if (orderedSnapshots.Length == 1 && _hostCardsPanel.ClientSize.Height > 180)
+            {
+                preferredHeight = Math.Min(preferredHeight, _hostCardsPanel.ClientSize.Height - 8);
+            }
+
+            card.Height = Math.Max(172, preferredHeight);
             card.Invalidate();
 
             if (orderChanged || _hostListDirty)
@@ -1451,16 +1565,22 @@ internal sealed class MainForm : Form
             .FirstOrDefault();
 
         _killButton.Enabled = row?.CanKill == true;
-        _killParentButton.Enabled = row?.ParentProcessId is not null;
+        _killParentButton.Visible = row?.ParentProcessId is not null;
+        _killParentButton.Enabled = _killParentButton.Visible;
 
         var hasService = !string.IsNullOrWhiteSpace(row?.ServiceName);
         var serviceStopped = string.Equals(row?.ServiceState, "Stopped", StringComparison.OrdinalIgnoreCase);
         var serviceDisabled = string.Equals(row?.ServiceStartMode, "Disabled", StringComparison.OrdinalIgnoreCase);
 
+        _stopServiceButton.Visible = hasService;
+        _startServiceButton.Visible = hasService;
+        _disableServiceButton.Visible = hasService;
+        _enableServiceButton.Visible = hasService;
         _stopServiceButton.Enabled = hasService && !serviceStopped;
         _startServiceButton.Enabled = hasService && serviceStopped && !serviceDisabled;
         _disableServiceButton.Enabled = hasService && !serviceDisabled;
         _enableServiceButton.Enabled = hasService && serviceDisabled;
+        _actionsPanel.PerformLayout();
     }
 
     private void UpdateListenerStatus()

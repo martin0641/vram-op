@@ -338,16 +338,17 @@ internal sealed class HostCard : Control
         e.Graphics.FillPath(fill, path);
         e.Graphics.DrawPath(border, path);
 
-        var pad = Math.Max(12, Font.Height);
+        var compact = Height < 220 || Width < 240;
+        var pad = compact ? Math.Max(10, Font.Height / 2) : Math.Max(12, Font.Height);
         var inner = Rectangle.Inflate(rect, -pad, -pad);
-        using var titleFont = new Font("Segoe UI", 10F, FontStyle.Bold);
+        using var titleFont = new Font("Segoe UI", compact ? 9F : 10F, FontStyle.Bold);
         var titleHeight = TextRenderer.MeasureText(e.Graphics, Snapshot.DisplayName, titleFont, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
         var statusHeight = TextRenderer.MeasureText(e.Graphics, "Hg", Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
         TextRenderer.DrawText(e.Graphics, Snapshot.DisplayName, titleFont, new Rectangle(inner.Left, inner.Top, inner.Width, titleHeight), AppTheme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
         TextRenderer.DrawText(e.Graphics, Snapshot.Status, Font, new Rectangle(inner.Left, inner.Top + titleHeight, inner.Width, statusHeight), AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
 
-        var lineHeight = Math.Max(Font.Height + 8, 26);
-        var y = inner.Top + titleHeight + statusHeight + Math.Max(10, Font.Height / 2);
+        var lineHeight = compact ? Math.Max(Font.Height + 3, 22) : Math.Max(Font.Height + 8, 26);
+        var y = inner.Top + titleHeight + statusHeight + (compact ? 4 : Math.Max(10, Font.Height / 2));
         DrawMetricLine(e.Graphics, "CPU", Snapshot.CpuPercent / 100, Formatters.Percent(Snapshot.CpuPercent), y, lineHeight, AppTheme.Accent);
         DrawMetricLine(e.Graphics, "RAM", Formatters.Ratio(Snapshot.RamUsedBytes, Snapshot.RamTotalBytes), $"{Formatters.Bytes(Snapshot.RamUsedBytes)} / {Formatters.Bytes(Snapshot.RamTotalBytes)}", y + lineHeight, lineHeight, AppTheme.Good);
         DrawMetricLine(e.Graphics, "GPU", Snapshot.GpuPercent / 100, Formatters.Percent(Snapshot.GpuPercent), y + lineHeight * 2, lineHeight, AppTheme.Warning);
