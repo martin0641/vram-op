@@ -29,6 +29,7 @@ internal sealed class MainForm : Form
     private readonly TableLayoutPanel _dashboardLayout = new();
     private readonly FlowLayoutPanel _actionsPanel = new();
     private readonly SplitContainer _dashboardSplit = new();
+    private readonly TableLayoutPanel _settingsContent = new();
     private readonly MetricCard _cpuCard = new() { Title = "CPU", AccentColor = AppTheme.Accent };
     private readonly MetricCard _ramCard = new() { Title = "RAM", AccentColor = AppTheme.Good };
     private readonly MetricCard _gpuCard = new() { Title = "GPU", AccentColor = AppTheme.Warning };
@@ -139,16 +140,40 @@ internal sealed class MainForm : Form
 
     private void ApplyInitialWindowBounds()
     {
-        var workingArea = Screen.FromPoint(Cursor.Position).WorkingArea;
-        var availableWidth = Math.Max(760, workingArea.Width - 48);
-        var availableHeight = Math.Max(520, workingArea.Height - 48);
+        const int preferredWidth = 1400;
+        const int preferredHeight = 840;
+        const int comfortableMinimumWidth = 1180;
+        const int comfortableMinimumHeight = 720;
+
+        var workingArea = GetStartupWorkingArea();
+        var availableWidth = Math.Max(760, workingArea.Width - 16);
+        var availableHeight = Math.Max(520, workingArea.Height - 16);
 
         MinimumSize = new Size(
-            Math.Min(980, availableWidth),
-            Math.Min(620, availableHeight));
-        Size = new Size(
-            Math.Max(MinimumSize.Width, Math.Min(1320, availableWidth)),
-            Math.Max(MinimumSize.Height, Math.Min(860, availableHeight)));
+            Math.Min(comfortableMinimumWidth, availableWidth),
+            Math.Min(comfortableMinimumHeight, availableHeight));
+
+        var width = Math.Max(MinimumSize.Width, Math.Min(preferredWidth, availableWidth));
+        var height = Math.Max(MinimumSize.Height, Math.Min(preferredHeight, availableHeight));
+        StartPosition = FormStartPosition.Manual;
+        Bounds = new Rectangle(
+            workingArea.Left + Math.Max(0, (workingArea.Width - width) / 2),
+            workingArea.Top + Math.Max(0, (workingArea.Height - height) / 2),
+            width,
+            height);
+    }
+
+    private static Rectangle GetStartupWorkingArea()
+    {
+        var currentScreen = Screen.FromPoint(Cursor.Position);
+        if (currentScreen.WorkingArea.Width >= 1180 && currentScreen.WorkingArea.Height >= 720)
+        {
+            return currentScreen.WorkingArea;
+        }
+
+        return Screen.AllScreens
+            .OrderByDescending(screen => screen.WorkingArea.Width * screen.WorkingArea.Height)
+            .FirstOrDefault()?.WorkingArea ?? currentScreen.WorkingArea;
     }
 
     private Control BuildHeader()
@@ -503,20 +528,17 @@ internal sealed class MainForm : Form
             Padding = new Padding(0, 6, 0, 0)
         };
 
-        var content = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            AutoSize = true,
-            ColumnCount = 2,
-            RowCount = 1,
-            BackColor = AppTheme.Background
-        };
-        content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        _settingsContent.Dock = DockStyle.Top;
+        _settingsContent.AutoSize = true;
+        _settingsContent.ColumnCount = 2;
+        _settingsContent.RowCount = 1;
+        _settingsContent.BackColor = AppTheme.Background;
+        _settingsContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        _settingsContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
 
-        content.Controls.Add(BuildListenerSettings(), 0, 0);
-        content.Controls.Add(BuildRemoteSettings(), 1, 0);
-        scroll.Controls.Add(content);
+        _settingsContent.Controls.Add(BuildListenerSettings(), 0, 0);
+        _settingsContent.Controls.Add(BuildRemoteSettings(), 1, 0);
+        scroll.Controls.Add(_settingsContent);
         _settingsPage.Controls.Add(scroll);
     }
 
@@ -527,22 +549,25 @@ internal sealed class MainForm : Form
             Dock = DockStyle.Top,
             Margin = new Padding(0, 0, 12, 0),
             BackColor = AppTheme.Surface,
-            MinimumSize = new Size(420, 420)
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(0, 0)
         };
 
         var layout = CreateSettingsLayout();
-        layout.Controls.Add(CreateSectionTitle("Local HTTPS listener"), 0, 0);
-        layout.SetColumnSpan(layout.GetControlFromPosition(0, 0)!, 2);
+        AddSectionTitle(layout, "Local HTTPS listener", 0);
 
         _listenerEnabledBox.Text = "Enable telemetry listener";
         _listenerEnabledBox.ForeColor = AppTheme.Text;
         _listenerEnabledBox.AutoSize = true;
+        SetSettingsRowHeight(layout, 1, CheckBoxRowHeight(_listenerEnabledBox));
         layout.Controls.Add(_listenerEnabledBox, 0, 1);
         layout.SetColumnSpan(_listenerEnabledBox, 2);
 
         _confirmKillsBox.Text = "Confirm before ending tasks";
         _confirmKillsBox.ForeColor = AppTheme.Text;
         _confirmKillsBox.AutoSize = true;
+        SetSettingsRowHeight(layout, 2, CheckBoxRowHeight(_confirmKillsBox));
         layout.Controls.Add(_confirmKillsBox, 0, 2);
         layout.SetColumnSpan(_confirmKillsBox, 2);
 
@@ -565,9 +590,11 @@ internal sealed class MainForm : Form
 
         var saveButton = new RoundedButton { Text = "Save and restart listener", Width = 190 };
         saveButton.Click += async (_, _) => await SaveListenerSettingsAsync();
+        SetSettingsRowHeight(layout, 7, ButtonRowHeight(saveButton));
         layout.Controls.Add(saveButton, 1, 7);
 
         var note = CreateNoteLabel("Each host uses a local self-signed certificate and requires TLS 1.3. Remote clients pin the certificate hash after the first successful connection.");
+        SetSettingsRowAutoSize(layout, 8);
         layout.Controls.Add(note, 0, 8);
         layout.SetColumnSpan(note, 2);
 
@@ -584,8 +611,9 @@ internal sealed class MainForm : Form
             RowCount = 1,
             BackColor = AppTheme.Surface
         };
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64));
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 42));
+        var digitWidth = Math.Max(68, TextRenderer.MeasureText("9999", _intervalBox.Font).Width + 24);
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, digitWidth));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Math.Max(42, TextRenderer.MeasureText("ms", Font).Width + 20)));
 
         _intervalBox.BackColor = AppTheme.SurfaceRaised;
         _intervalBox.ForeColor = AppTheme.Text;
@@ -595,7 +623,7 @@ internal sealed class MainForm : Form
         _intervalBox.HidePromptOnLeave = true;
         _intervalBox.CutCopyMaskFormat = MaskFormat.ExcludePromptAndLiterals;
         _intervalBox.TextMaskFormat = MaskFormat.ExcludePromptAndLiterals;
-        _intervalBox.Width = 54;
+        _intervalBox.Width = digitWidth - 10;
         _intervalBox.Dock = DockStyle.Left;
         _intervalBox.Margin = new Padding(0, 7, 0, 7);
 
@@ -620,17 +648,19 @@ internal sealed class MainForm : Form
             Dock = DockStyle.Top,
             Margin = new Padding(12, 0, 0, 0),
             BackColor = AppTheme.Surface,
-            MinimumSize = new Size(500, 560)
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(0, 0)
         };
 
         var layout = CreateSettingsLayout();
-        layout.Controls.Add(CreateSectionTitle("Remote hosts"), 0, 0);
-        layout.SetColumnSpan(layout.GetControlFromPosition(0, 0)!, 2);
+        AddSectionTitle(layout, "Remote hosts", 0);
 
         _remoteListBox.Height = 140;
         _remoteListBox.BackColor = AppTheme.SurfaceRaised;
         _remoteListBox.ForeColor = AppTheme.Text;
         _remoteListBox.BorderStyle = BorderStyle.FixedSingle;
+        SetSettingsRowHeight(layout, 1, Math.Max(132, Font.Height * 6));
         layout.Controls.Add(_remoteListBox, 0, 1);
         layout.SetColumnSpan(_remoteListBox, 2);
 
@@ -673,10 +703,12 @@ internal sealed class MainForm : Form
         buttons.Controls.Add(saveRemoteButton);
         buttons.Controls.Add(removeRemoteButton);
         buttons.Controls.Add(clearPinButton);
+        SetSettingsRowHeight(layout, 8, ButtonRowHeight(saveRemoteButton));
         layout.Controls.Add(buttons, 0, 8);
         layout.SetColumnSpan(buttons, 2);
 
         var note = CreateNoteLabel("First successful connection pins the server certificate SHA-256 hash here. Clear the pin only when you intentionally replaced that host certificate.");
+        SetSettingsRowAutoSize(layout, 9);
         layout.Controls.Add(note, 0, 9);
         layout.SetColumnSpan(note, 2);
 
@@ -684,8 +716,9 @@ internal sealed class MainForm : Form
         return panel;
     }
 
-    private static TableLayoutPanel CreateSettingsLayout()
+    private TableLayoutPanel CreateSettingsLayout()
     {
+        var labelWidth = Math.Max(176, TextRenderer.MeasureText("Update every", Font).Width + 36);
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
@@ -693,21 +726,25 @@ internal sealed class MainForm : Form
             ColumnCount = 2,
             BackColor = AppTheme.Surface
         };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 128));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, labelWidth));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         return layout;
     }
 
-    private static Label CreateSectionTitle(string text) =>
-        new()
+    private void AddSectionTitle(TableLayoutPanel layout, string text, int row)
+    {
+        var title = new Label
         {
             Text = text,
             Dock = DockStyle.Fill,
             ForeColor = AppTheme.Text,
-            Font = new Font("Segoe UI", 15F, FontStyle.Bold),
-            Height = 44,
+            Font = new Font("Segoe UI", 13.5F, FontStyle.Bold),
             TextAlign = ContentAlignment.MiddleLeft
         };
+        SetSettingsRowHeight(layout, row, Math.Max(54, title.Font.Height + 20));
+        layout.Controls.Add(title, 0, row);
+        layout.SetColumnSpan(title, 2);
+    }
 
     private static Label CreateNoteLabel(string text) =>
         new()
@@ -728,13 +765,42 @@ internal sealed class MainForm : Form
             Dock = DockStyle.Fill,
             ForeColor = AppTheme.MutedText,
             TextAlign = ContentAlignment.MiddleLeft,
-            Height = 42
+            AutoEllipsis = true
         };
         control.Dock = DockStyle.Fill;
-        control.Margin = new Padding(0, 6, 0, 6);
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        control.Margin = new Padding(0, 5, 0, 5);
+        control.MinimumSize = new Size(0, Math.Max(control.MinimumSize.Height, control.Font.Height + 12));
+        SetSettingsRowHeight(layout, row, Math.Max(50, Math.Max(labelControl.Font.Height, control.Font.Height) + 24));
         layout.Controls.Add(labelControl, 0, row);
         layout.Controls.Add(control, 1, row);
+    }
+
+    private static int CheckBoxRowHeight(CheckBox checkBox) =>
+        Math.Max(34, checkBox.Font.Height + 14);
+
+    private static int ButtonRowHeight(Control control) =>
+        Math.Max(54, control.Font.Height + 28);
+
+    private static void SetSettingsRowHeight(TableLayoutPanel layout, int row, int height)
+    {
+        EnsureSettingsRow(layout, row);
+        layout.RowStyles[row].SizeType = SizeType.Absolute;
+        layout.RowStyles[row].Height = height;
+    }
+
+    private static void SetSettingsRowAutoSize(TableLayoutPanel layout, int row)
+    {
+        EnsureSettingsRow(layout, row);
+        layout.RowStyles[row].SizeType = SizeType.AutoSize;
+    }
+
+    private static void EnsureSettingsRow(TableLayoutPanel layout, int row)
+    {
+        layout.RowCount = Math.Max(layout.RowCount, row + 1);
+        while (layout.RowStyles.Count <= row)
+        {
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        }
     }
 
     private static void ConfigureTextInput(TextBox textBox, int maxLength, Func<char, bool> isAllowed, Func<string, string> normalize)
