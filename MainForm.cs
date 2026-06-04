@@ -448,8 +448,8 @@ internal sealed class MainForm : Form
 
     private int CalculateMetricsRowHeight(int headerHeight, int statusHeight, int actionsHeight)
     {
-        var desired = ClientSize.Height < 820 ? 112 : 148;
-        var minimum = Math.Max(96, _cpuCard.MinimumSize.Height);
+        var desired = ClientSize.Height < 900 ? 168 : 190;
+        var minimum = Math.Max(150, _cpuCard.MinimumSize.Height + _cpuCard.Margin.Vertical + 22);
         var processRowsHeight = RequiredProcessGridHeight();
         var availableDashboardHeight = ClientSize.Height - _rootLayout.Padding.Vertical - headerHeight - statusHeight;
         var maxMetricsHeight = availableDashboardHeight - actionsHeight - processRowsHeight;
@@ -468,7 +468,7 @@ internal sealed class MainForm : Form
         var headerHeight = (int)Math.Ceiling(_rootLayout.RowStyles[0].Height);
         var statusHeight = (int)Math.Ceiling(_rootLayout.RowStyles[2].Height);
         var actionsHeight = CalculateActionRowHeight();
-        var metricsHeight = Math.Max(108, _cpuCard.MinimumSize.Height);
+        var metricsHeight = Math.Max(168, _cpuCard.MinimumSize.Height + _cpuCard.Margin.Vertical + 22);
         var requiredClientHeight = _rootLayout.Padding.Vertical
             + headerHeight
             + metricsHeight

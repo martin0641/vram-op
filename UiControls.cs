@@ -305,7 +305,7 @@ internal sealed class MetricCard : Control
 
         var valueFontSize = compact ? Font.Size + 2F : Font.Size + 5F;
         var availableValueHeight = Math.Max(Font.Height + 2, inner.Height - titleHeight - detailHeight - barHeight - titleGap - detailGap - barGap);
-        using var valueFont = new Font("Segoe UI", valueFontSize, FontStyle.Bold);
+        using var valueFont = CreateFittingValueFont(e.Graphics, ValueText, valueFontSize, availableValueHeight);
         var valueHeight = TextRenderer.MeasureText(e.Graphics, ValueText, valueFont, Size.Empty, TextFormatFlags.NoPadding).Height + 4;
         var effectiveValueHeight = Math.Min(valueHeight, availableValueHeight);
 
@@ -323,6 +323,24 @@ internal sealed class MetricCard : Control
 
         var barRect = new Rectangle(inner.Left, Math.Max(y + detailHeight + barGap, inner.Bottom - barHeight), inner.Width, barHeight);
         DrawProgress(e.Graphics, barRect, Ratio, AccentColor);
+    }
+
+    private Font CreateFittingValueFont(Graphics graphics, string text, float startingSize, int availableHeight)
+    {
+        var minimumSize = Math.Max(8F, Font.Size);
+        for (var size = startingSize; size > minimumSize; size -= 0.5F)
+        {
+            var candidate = new Font("Segoe UI", size, FontStyle.Bold);
+            var measured = TextRenderer.MeasureText(graphics, text, candidate, Size.Empty, TextFormatFlags.NoPadding).Height + 4;
+            if (measured <= availableHeight)
+            {
+                return candidate;
+            }
+
+            candidate.Dispose();
+        }
+
+        return new Font("Segoe UI", minimumSize, FontStyle.Bold);
     }
 
     internal static void DrawProgress(Graphics graphics, Rectangle bounds, double ratio, Color color)
