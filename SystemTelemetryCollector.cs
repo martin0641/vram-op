@@ -365,11 +365,11 @@ internal sealed class SystemTelemetryCollector : IDisposable
     private static List<GpuAdapterInfo> ReadDxgiGpuAdapters()
     {
         var adapters = new List<GpuAdapterInfo>();
+        var wmiAdapters = ReadWmiGpuAdapters();
         IDXGIFactory1? factory = null;
 
         try
         {
-            var wmiAdapters = ReadWmiGpuAdapters();
             var seenAdapters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var factoryId = typeof(IDXGIFactory1).GUID;
             var hr = CreateDXGIFactory1(ref factoryId, out factory);
@@ -437,7 +437,7 @@ internal sealed class SystemTelemetryCollector : IDisposable
             }
         }
 
-        return adapters;
+        return DeduplicateDxgiAdapters(adapters, wmiAdapters);
     }
 
     private static string MatchDriverVersion(string adapterName, IReadOnlyList<GpuAdapterInfo> wmiAdapters)
@@ -448,6 +448,29 @@ internal sealed class SystemTelemetryCollector : IDisposable
 
         return match?.DriverVersion ?? string.Empty;
     }
+
+    private static List<GpuAdapterInfo> DeduplicateDxgiAdapters(IReadOnlyList<GpuAdapterInfo> adapters, IReadOnlyList<GpuAdapterInfo> wmiAdapters)
+    {
+        var result = new List<GpuAdapterInfo>();
+
+        foreach (var group in adapters.GroupBy(adapter => $"{NormalizeAdapterName(adapter.Name)}|{adapter.VramTotalBytes}"))
+        {
+            var first = group.First();
+            var expectedCount = wmiAdapters.Count(adapter => AdapterNamesMatch(first.Name, adapter.Name));
+            var takeCount = expectedCount > 0 ? expectedCount : 1;
+            result.AddRange(group.Take(takeCount));
+        }
+
+        return result;
+    }
+
+    private static bool AdapterNamesMatch(string left, string right) =>
+        left.Contains(right, StringComparison.OrdinalIgnoreCase)
+        || right.Contains(left, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(NormalizeAdapterName(left), NormalizeAdapterName(right), StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeAdapterName(string name) =>
+        new(name.Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
 
     private static long UIntPtrToInt64(UIntPtr value)
     {
