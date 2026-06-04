@@ -34,6 +34,7 @@ internal sealed class MainForm : Form
     private readonly MetricCard _ramCard = new() { Title = "RAM", AccentColor = AppTheme.Good };
     private readonly MetricCard _gpuCard = new() { Title = "GPU", AccentColor = AppTheme.Warning };
     private readonly MetricCard _vramCard = new() { Title = "VRAM", AccentColor = AppTheme.Danger };
+    private readonly Label _titleLabel = new BufferedLabel();
     private readonly Label _statusLabel = new BufferedLabel();
     private readonly Label _listenerStatusLabel = new BufferedLabel();
     private readonly MaskedTextBox _intervalBox = new("9999");
@@ -131,7 +132,7 @@ internal sealed class MainForm : Form
 
         _statusLabel.Dock = DockStyle.Fill;
         _statusLabel.ForeColor = AppTheme.MutedText;
-        _statusLabel.TextAlign = ContentAlignment.MiddleLeft;
+        _statusLabel.TextAlign = ContentAlignment.MiddleRight;
         SetStatusText("Starting");
 
         Controls.Add(_rootLayout);
@@ -140,10 +141,10 @@ internal sealed class MainForm : Form
 
     private void ApplyInitialWindowBounds()
     {
-        const int preferredWidth = 1400;
-        const int preferredHeight = 840;
-        const int comfortableMinimumWidth = 1180;
-        const int comfortableMinimumHeight = 720;
+        const int preferredWidth = 1500;
+        const int preferredHeight = 960;
+        const int comfortableMinimumWidth = 1240;
+        const int comfortableMinimumHeight = 820;
 
         var workingArea = GetStartupWorkingArea();
         var availableWidth = Math.Max(760, workingArea.Width - 16);
@@ -187,14 +188,11 @@ internal sealed class MainForm : Form
         _headerLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
         _headerLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
 
-        var title = new Label
-        {
-            Dock = DockStyle.Fill,
-            Text = AppDisplayName,
-            Font = new Font("Segoe UI", 16F, FontStyle.Bold),
-            ForeColor = AppTheme.Text,
-            TextAlign = ContentAlignment.MiddleLeft
-        };
+        _titleLabel.Dock = DockStyle.Fill;
+        _titleLabel.Text = AppDisplayName;
+        _titleLabel.Font = new Font("Segoe UI", 16F, FontStyle.Bold);
+        _titleLabel.ForeColor = AppTheme.Text;
+        _titleLabel.TextAlign = ContentAlignment.MiddleLeft;
 
         _listenerStatusLabel.Dock = DockStyle.Fill;
         _listenerStatusLabel.ForeColor = AppTheme.MutedText;
@@ -211,7 +209,7 @@ internal sealed class MainForm : Form
         nav.Controls.Add(_settingsButton);
         nav.Controls.Add(_dashboardButton);
 
-        _headerLayout.Controls.Add(title, 0, 0);
+        _headerLayout.Controls.Add(_titleLabel, 0, 0);
         _headerLayout.Controls.Add(_listenerStatusLabel, 0, 1);
         _headerLayout.Controls.Add(nav, 1, 0);
         _headerLayout.SetRowSpan(nav, 2);
@@ -422,20 +420,77 @@ internal sealed class MainForm : Form
         }
 
         var compactWidth = ClientSize.Width < 980;
-        var compactHeight = ClientSize.Height < 720;
         var padding = compactWidth ? 10 : 14;
         _rootLayout.Padding = new Padding(padding);
-        _rootLayout.RowStyles[0].Height = compactHeight ? 76 : 104;
-        _rootLayout.RowStyles[2].Height = compactHeight ? 32 : 38;
-        _headerLayout.RowStyles[0].Height = compactHeight ? 44 : 56;
-        _headerLayout.RowStyles[1].Height = compactHeight ? 30 : 40;
-        _dashboardLayout.RowStyles[0].Height = compactHeight ? 136 : 176;
-        _dashboardLayout.RowStyles[2].Height = compactWidth ? 54 : 64;
-
         FitButtonWidths();
+
+        var titleRowHeight = Math.Max(56, _titleLabel.Font.Height + 16);
+        var listenerRowHeight = Math.Max(34, _listenerStatusLabel.Font.Height + 10);
+        var headerHeight = titleRowHeight + listenerRowHeight;
+        var statusHeight = Math.Max(36, _statusLabel.Font.Height + 14);
+        var actionsHeight = CalculateActionRowHeight();
+        var metricsHeight = CalculateMetricsRowHeight(headerHeight, statusHeight, actionsHeight);
+
+        _rootLayout.RowStyles[0].Height = headerHeight;
+        _rootLayout.RowStyles[2].Height = statusHeight;
+        _headerLayout.RowStyles[0].Height = titleRowHeight;
+        _headerLayout.RowStyles[1].Height = listenerRowHeight;
+        _dashboardLayout.RowStyles[0].Height = metricsHeight;
+        _dashboardLayout.RowStyles[2].Height = actionsHeight;
+
         AdjustDashboardSplit();
         UpdateProcessGridColumns();
         UpdateHostCards();
+    }
+
+    private int CalculateMetricsRowHeight(int headerHeight, int statusHeight, int actionsHeight)
+    {
+        var desired = ClientSize.Height < 820 ? 132 : 156;
+        var minimum = Math.Max(112, _cpuCard.MinimumSize.Height);
+        var processRowsHeight = _processGrid.ColumnHeadersHeight + (_processGrid.RowTemplate.Height * 10) + 32;
+        var availableDashboardHeight = ClientSize.Height - _rootLayout.Padding.Vertical - headerHeight - statusHeight;
+        var maxMetricsHeight = availableDashboardHeight - actionsHeight - processRowsHeight;
+
+        if (maxMetricsHeight >= minimum)
+        {
+            return Math.Min(desired, maxMetricsHeight);
+        }
+
+        return minimum;
+    }
+
+    private int CalculateActionRowHeight()
+    {
+        var visibleControls = _actionsPanel.Controls
+            .Cast<Control>()
+            .Where(control => control.Visible)
+            .ToArray();
+
+        if (visibleControls.Length == 0)
+        {
+            return Math.Max(56, Font.Height + 32);
+        }
+
+        var availableWidth = Math.Max(240, _actionsPanel.ClientSize.Width > 0
+            ? _actionsPanel.ClientSize.Width - _actionsPanel.Padding.Horizontal
+            : ClientSize.Width - _rootLayout.Padding.Horizontal);
+        var rowHeight = visibleControls.Max(control => control.Height + control.Margin.Vertical);
+        var rows = 1;
+        var currentWidth = 0;
+
+        foreach (var control in visibleControls)
+        {
+            var controlWidth = control.Width + control.Margin.Horizontal;
+            if (currentWidth > 0 && currentWidth + controlWidth > availableWidth)
+            {
+                rows++;
+                currentWidth = 0;
+            }
+
+            currentWidth += controlWidth;
+        }
+
+        return Math.Max(58, _actionsPanel.Padding.Vertical + (rows * rowHeight) + ((rows - 1) * 6) + 4);
     }
 
     private void FitButtonWidths()
