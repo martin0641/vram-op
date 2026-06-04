@@ -37,8 +37,10 @@ The update interval accepts values from `250 ms` through `9999 ms`.
 
 ## Notes
 
-- `VRAM` is the primary per-process column for freeing discrete GPU VRAM for an LLM model.
-- The summary uses `GPU Adapter Memory(*)\Dedicated Usage` for the adapter-level VRAM total when Windows exposes it.
+- `VRAM` is local GPU memory. `Sys RAM` is GPU-reported shared/non-local system memory for that process.
+- `Spill` reports when Windows shows non-local GPU memory usage; `Shared` means the process is using shared system RAM through the GPU path.
+- Summary cards show used memory first, then free or over-physical memory and detected total.
+- The summary uses `GPU Adapter Memory(*)\Dedicated Usage` for adapter-level VRAM used and WMI adapter RAM for detected physical total when Windows exposes it.
 - The per-process `Dedicated ctr` value is kept for diagnostics, but Windows can over-report it badly for some processes. Treat it as advisory, especially for `dwm.exe` and `csrss.exe`.
 - The app uses Windows performance counters, so it is not tied to NVIDIA, AMD, or Intel command line tools.
 - Some elevated or protected Windows processes are shown but not killable from the app.

@@ -26,6 +26,7 @@ internal sealed record GpuProcessInfo(
     long LocalVramBytes,
     long DedicatedCounterBytes,
     long SharedBytes,
+    long NonLocalBytes,
     long CommittedBytes,
     string WindowTitle,
     string ExecutablePath,
@@ -38,7 +39,30 @@ internal sealed record GpuProcessInfo(
     string ServiceStartMode,
     int ServiceCount,
     int? ParentProcessId,
-    string ParentProcessName);
+    string ParentProcessName)
+{
+    private const long SpilloverThresholdBytes = 16L * 1024 * 1024;
+
+    public long SystemGpuMemoryBytes => Math.Max(0, SharedBytes) + Math.Max(0, NonLocalBytes);
+
+    public string SpilloverStatus
+    {
+        get
+        {
+            if (NonLocalBytes >= SpilloverThresholdBytes)
+            {
+                return $"Yes - {Formatters.BytesPrecise(NonLocalBytes)} non-local";
+            }
+
+            if (SharedBytes >= SpilloverThresholdBytes)
+            {
+                return $"Shared - {Formatters.BytesPrecise(SharedBytes)}";
+            }
+
+            return "No";
+        }
+    }
+}
 
 internal enum ServiceControlAction
 {
@@ -69,5 +93,6 @@ internal sealed class HostSnapshot
     public long RamTotalBytes => Telemetry?.RamTotalBytes ?? 0;
     public long VramUsedBytes => Telemetry?.VramUsedBytes ?? 0;
     public long VramTotalBytes => Telemetry?.VramTotalBytes ?? 0;
+    public long SharedGpuMemoryBytes => Telemetry?.SharedGpuMemoryBytes ?? 0;
     public IReadOnlyList<GpuProcessInfo> TopGpuProcesses => Telemetry?.TopGpuProcesses ?? Array.Empty<GpuProcessInfo>();
 }

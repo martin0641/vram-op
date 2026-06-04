@@ -50,6 +50,7 @@ internal sealed class SystemTelemetryCollector : IDisposable
                     row.LocalBytes,
                     row.DedicatedBytes,
                     row.SharedBytes,
+                    row.NonLocalBytes,
                     row.TotalCommittedBytes,
                     row.WindowTitle,
                     row.ExecutablePath,

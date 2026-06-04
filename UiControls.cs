@@ -369,18 +369,33 @@ internal sealed class MetricCard : Control
 
     private void DrawCompactLine(Graphics graphics, Rectangle inner, int availableHeight)
     {
-        var textHeight = Math.Max(1, Math.Min(availableHeight, Font.Height + 6));
+        var primaryHeight = Math.Max(1, Math.Min(availableHeight, Font.Height + 6));
+        var detailHeight = TextRenderer.MeasureText(graphics, "Hg", Font, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Height + 2;
+        var showDetail = !string.IsNullOrWhiteSpace(DetailText)
+            && availableHeight >= primaryHeight + detailHeight + 2;
+
+        if (showDetail)
+        {
+            primaryHeight = Math.Max(1, Math.Min(Font.Height + 2, availableHeight - detailHeight - 2));
+        }
+
         var gap = Math.Max(8, Math.Min(18, inner.Width / 16));
         var valueWidth = Math.Max(inner.Width / 3, Math.Min(inner.Width / 2, TextRenderer.MeasureText(graphics, ValueText, Font, Size.Empty, TextFormatFlags.NoPadding).Width + gap));
         var titleWidth = Math.Max(1, inner.Width - valueWidth - gap);
-        var titleRect = new Rectangle(inner.Left, inner.Top, titleWidth, textHeight);
-        var valueRect = new Rectangle(inner.Right - valueWidth, inner.Top, valueWidth, textHeight);
-        using var titleFont = CreateFittingCompactFont(graphics, Title, Font.Size, FontStyle.Regular, textHeight);
-        using var valueFont = CreateFittingCompactFont(graphics, ValueText, Font.Size + 1F, FontStyle.Bold, textHeight);
+        var titleRect = new Rectangle(inner.Left, inner.Top, titleWidth, primaryHeight);
+        var valueRect = new Rectangle(inner.Right - valueWidth, inner.Top, valueWidth, primaryHeight);
+        using var titleFont = CreateFittingCompactFont(graphics, Title, Font.Size, FontStyle.Regular, primaryHeight);
+        using var valueFont = CreateFittingCompactFont(graphics, ValueText, Font.Size + 1F, FontStyle.Bold, primaryHeight);
 
         const TextFormatFlags flags = TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine;
         TextRenderer.DrawText(graphics, Title, titleFont, titleRect, AppTheme.MutedText, flags | TextFormatFlags.Left);
         TextRenderer.DrawText(graphics, ValueText, valueFont, valueRect, AppTheme.Text, flags | TextFormatFlags.Right);
+
+        if (showDetail)
+        {
+            var detailRect = new Rectangle(inner.Left, inner.Top + primaryHeight + 2, inner.Width, detailHeight);
+            TextRenderer.DrawText(graphics, DetailText, Font, detailRect, AppTheme.MutedText, flags | TextFormatFlags.Left);
+        }
     }
 
     private static Font CreateFittingCompactFont(Graphics graphics, string text, float startingSize, FontStyle style, int availableHeight)
@@ -479,9 +494,25 @@ internal sealed class HostCard : Control
         var lineHeight = compact ? Math.Max(Font.Height + 3, 22) : Math.Max(Font.Height + 8, 26);
         var y = inner.Top + titleHeight + statusHeight + (compact ? 4 : Math.Max(10, Font.Height / 2));
         DrawMetricLine(e.Graphics, "CPU", Snapshot.CpuPercent / 100, Formatters.Percent(Snapshot.CpuPercent), y, lineHeight, AppTheme.Accent);
-        DrawMetricLine(e.Graphics, "RAM", Formatters.Ratio(Snapshot.RamUsedBytes, Snapshot.RamTotalBytes), $"{Formatters.Bytes(Snapshot.RamUsedBytes)} / {Formatters.Bytes(Snapshot.RamTotalBytes)}", y + lineHeight, lineHeight, AppTheme.Good);
+        DrawMetricLine(e.Graphics, "RAM", Formatters.Ratio(Snapshot.RamUsedBytes, Snapshot.RamTotalBytes), MemoryLine(Snapshot.RamUsedBytes, Snapshot.RamTotalBytes), y + lineHeight, lineHeight, AppTheme.Good);
         DrawMetricLine(e.Graphics, "GPU", Snapshot.GpuPercent / 100, Formatters.Percent(Snapshot.GpuPercent), y + lineHeight * 2, lineHeight, AppTheme.Warning);
-        DrawMetricLine(e.Graphics, "VRAM", Formatters.Ratio(Snapshot.VramUsedBytes, Snapshot.VramTotalBytes), $"{Formatters.Bytes(Snapshot.VramUsedBytes)} / {Formatters.Bytes(Snapshot.VramTotalBytes)}", y + lineHeight * 3, lineHeight, AppTheme.Danger);
+        DrawMetricLine(e.Graphics, "VRAM", Formatters.Ratio(Snapshot.VramUsedBytes, Snapshot.VramTotalBytes), MemoryLine(Snapshot.VramUsedBytes, Snapshot.VramTotalBytes), y + lineHeight * 3, lineHeight, AppTheme.Danger);
+    }
+
+    private static string MemoryLine(long usedBytes, long totalBytes)
+    {
+        if (totalBytes <= 0)
+        {
+            return $"{Formatters.BytesPrecise(usedBytes)} used";
+        }
+
+        var overBytes = Math.Max(0, usedBytes - totalBytes);
+        if (overBytes > 0)
+        {
+            return $"{Formatters.BytesPrecise(usedBytes)} used, {Formatters.BytesPrecise(overBytes)} over";
+        }
+
+        return $"{Formatters.BytesPrecise(usedBytes)} used, {Formatters.BytesPrecise(totalBytes - usedBytes)} free";
     }
 
     private void DrawMetricLine(Graphics graphics, string label, double ratio, string value, int y, int lineHeight, Color color)

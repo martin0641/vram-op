@@ -369,7 +369,8 @@ internal sealed class MainForm : Form
         AddProcessColumn(nameof(GpuProcessInfo.ProcessName), "Process", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleLeft);
         AddProcessColumn(nameof(GpuProcessInfo.ProcessId), "PID", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleCenter, isResizable: false, headerAlignment: DataGridViewContentAlignment.MiddleCenter);
         AddProcessColumn(nameof(GpuProcessInfo.LocalVramBytes), "VRAM", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleCenter, isResizable: false, headerAlignment: DataGridViewContentAlignment.MiddleCenter);
-        AddProcessColumn(nameof(GpuProcessInfo.SharedBytes), "Shared", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleCenter, isResizable: false, headerAlignment: DataGridViewContentAlignment.MiddleCenter);
+        AddProcessColumn(nameof(GpuProcessInfo.SystemGpuMemoryBytes), "Sys RAM", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleCenter, isResizable: false, headerAlignment: DataGridViewContentAlignment.MiddleCenter);
+        AddProcessColumn(nameof(GpuProcessInfo.SpilloverStatus), "Spill", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleLeft);
         AddProcessColumn(nameof(GpuProcessInfo.RestartBehavior), "Restart", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleLeft);
         AddProcessColumn(nameof(GpuProcessInfo.WindowTitle), "Window", DataGridViewAutoSizeColumnMode.Fill, 65, DataGridViewContentAlignment.MiddleLeft);
         AddProcessColumn(nameof(GpuProcessInfo.Notes), "Notes", DataGridViewAutoSizeColumnMode.Fill, 35, DataGridViewContentAlignment.MiddleLeft);
@@ -382,9 +383,9 @@ internal sealed class MainForm : Form
             }
 
             var propertyName = _processGrid.Columns[e.ColumnIndex].DataPropertyName;
-            if (propertyName is nameof(GpuProcessInfo.LocalVramBytes) or nameof(GpuProcessInfo.SharedBytes))
+            if (propertyName is nameof(GpuProcessInfo.LocalVramBytes) or nameof(GpuProcessInfo.SystemGpuMemoryBytes))
             {
-                e.Value = Formatters.Bytes(bytes);
+                e.Value = Formatters.BytesPrecise(bytes);
                 e.FormattingApplied = true;
             }
         };
@@ -598,8 +599,9 @@ internal sealed class MainForm : Form
 
         ConfigureProcessColumn(nameof(GpuProcessInfo.ProcessName), compact ? DataGridViewAutoSizeColumnMode.Fill : DataGridViewAutoSizeColumnMode.AllCells, compact ? 38 : 100, compact ? 110 : 80, visible: true);
         ConfigureProcessColumn(nameof(GpuProcessInfo.ProcessId), DataGridViewAutoSizeColumnMode.AllCells, 100, 54, visible: true);
-        ConfigureProcessColumn(nameof(GpuProcessInfo.LocalVramBytes), DataGridViewAutoSizeColumnMode.AllCells, 100, 72, visible: true);
-        ConfigureProcessColumn(nameof(GpuProcessInfo.SharedBytes), DataGridViewAutoSizeColumnMode.AllCells, 100, 78, visible: true);
+        ConfigureProcessColumn(nameof(GpuProcessInfo.LocalVramBytes), DataGridViewAutoSizeColumnMode.AllCells, 100, 86, visible: true);
+        ConfigureProcessColumn(nameof(GpuProcessInfo.SystemGpuMemoryBytes), DataGridViewAutoSizeColumnMode.AllCells, 100, 86, visible: true);
+        ConfigureProcessColumn(nameof(GpuProcessInfo.SpilloverStatus), DataGridViewAutoSizeColumnMode.AllCells, 100, 72, visible: true);
         ConfigureProcessColumn(nameof(GpuProcessInfo.RestartBehavior), compact ? DataGridViewAutoSizeColumnMode.Fill : DataGridViewAutoSizeColumnMode.AllCells, compact ? 36 : 100, compact ? 92 : 90, visible: true);
         ConfigureProcessColumn(nameof(GpuProcessInfo.WindowTitle), DataGridViewAutoSizeColumnMode.Fill, 65, 90, visible: !compact);
         ConfigureProcessColumn(nameof(GpuProcessInfo.Notes), DataGridViewAutoSizeColumnMode.Fill, 35, 90, visible: !compact);
@@ -1379,7 +1381,7 @@ internal sealed class MainForm : Form
     private void UpdateProcessRows(IReadOnlyList<GpuProcessInfo> rows, bool forceProcessRefresh)
     {
         var signature = string.Join("|", rows.Select(row =>
-            $"{row.ProcessId}:{row.ProcessName}:{row.LocalVramBytes}:{row.SharedBytes}:{row.RestartBehavior}:{row.ServiceName}:{row.ServiceState}:{row.ServiceStartMode}:{row.ServiceCount}:{row.ParentProcessId}:{row.ParentProcessName}:{row.WindowTitle}:{row.Notes}:{row.CanKill}"));
+            $"{row.ProcessId}:{row.ProcessName}:{row.LocalVramBytes}:{row.SharedBytes}:{row.NonLocalBytes}:{row.SystemGpuMemoryBytes}:{row.SpilloverStatus}:{row.RestartBehavior}:{row.ServiceName}:{row.ServiceState}:{row.ServiceStartMode}:{row.ServiceCount}:{row.ParentProcessId}:{row.ParentProcessName}:{row.WindowTitle}:{row.Notes}:{row.CanKill}"));
 
         if (!forceProcessRefresh && string.Equals(signature, _lastRenderedProcessSignature, StringComparison.Ordinal))
         {
@@ -1437,9 +1439,9 @@ internal sealed class MainForm : Form
         }
 
         SetMetric(_cpuCard, "CPU", Formatters.Percent(host.CpuPercent), host.DisplayName, host.CpuPercent / 100);
-        SetMetric(_ramCard, "RAM", Formatters.Bytes(host.RamUsedBytes), $"{Formatters.Bytes(host.RamTotalBytes)} total", Formatters.Ratio(host.RamUsedBytes, host.RamTotalBytes));
+        SetMemoryMetric(_ramCard, "RAM used", host.RamUsedBytes, host.RamTotalBytes, AppTheme.Good);
         SetMetric(_gpuCard, "GPU", Formatters.Percent(host.GpuPercent), "Engine utilization", host.GpuPercent / 100);
-        SetMetric(_vramCard, "VRAM", Formatters.Bytes(host.VramUsedBytes), $"{Formatters.Bytes(host.VramTotalBytes)} detected", Formatters.Ratio(host.VramUsedBytes, host.VramTotalBytes));
+        SetMemoryMetric(_vramCard, "VRAM used", host.VramUsedBytes, host.VramTotalBytes, AppTheme.Danger);
     }
 
     private static void SetMetric(MetricCard card, string title, string value, string detail, double ratio)
@@ -1457,6 +1459,25 @@ internal sealed class MainForm : Form
         card.DetailText = detail;
         card.Ratio = ratio;
         card.Invalidate();
+    }
+
+    private static void SetMemoryMetric(MetricCard card, string title, long usedBytes, long totalBytes, Color accentColor)
+    {
+        var freeBytes = Math.Max(0, totalBytes - usedBytes);
+        var overBytes = Math.Max(0, usedBytes - totalBytes);
+        var detail = totalBytes <= 0
+            ? "Total unknown"
+            : overBytes > 0
+                ? $"{Formatters.BytesPrecise(overBytes)} over / {Formatters.BytesPrecise(totalBytes)} total"
+                : $"{Formatters.BytesPrecise(freeBytes)} free / {Formatters.BytesPrecise(totalBytes)} total";
+
+        var previousAccent = card.AccentColor;
+        card.AccentColor = overBytes > 0 ? AppTheme.Warning : accentColor;
+        SetMetric(card, title, Formatters.BytesPrecise(usedBytes), detail, Formatters.Ratio(usedBytes, totalBytes));
+        if (previousAccent != card.AccentColor)
+        {
+            card.Invalidate();
+        }
     }
 
     private async Task KillSelectedProcessAsync()
@@ -1479,7 +1500,7 @@ internal sealed class MainForm : Form
         }
 
         if (!ConfirmTaskKill(
-            $"Terminate {row.ProcessName} ({row.ProcessId}) on {host.DisplayName}?{Environment.NewLine}{Environment.NewLine}VRAM reported: {Formatters.Bytes(row.LocalVramBytes)}",
+            $"Terminate {row.ProcessName} ({row.ProcessId}) on {host.DisplayName}?{Environment.NewLine}{Environment.NewLine}VRAM reported: {Formatters.BytesPrecise(row.LocalVramBytes)}",
             "Kill GPU task?"))
         {
             return;
