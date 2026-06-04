@@ -294,18 +294,27 @@ internal sealed class MetricCard : Control
         e.Graphics.DrawPath(border, path);
 
         var compact = Height < 128 || Width < 220;
-        var pad = compact ? Math.Max(8, Font.Height / 2) : Math.Max(12, Font.Height);
+        var pad = compact ? Math.Min(12, Math.Max(8, Font.Height / 2)) : Math.Max(12, Font.Height);
         var inner = Rectangle.Inflate(rect, -pad, -pad);
-        var barHeight = Math.Max(6, compact ? Font.Height / 3 : Font.Height / 2);
-        var barGap = compact ? 5 : Math.Max(10, Font.Height / 2);
+        var barHeight = compact ? Math.Max(6, Math.Min(10, Font.Height / 3)) : Math.Max(6, Font.Height / 2);
+        var barGap = compact ? Math.Max(4, Math.Min(8, Font.Height / 4)) : Math.Max(10, Font.Height / 2);
         var barRect = new Rectangle(inner.Left, inner.Bottom - barHeight, inner.Width, barHeight);
         var textBottom = Math.Max(inner.Top, barRect.Top - barGap);
+        var textHeight = textBottom - inner.Top;
 
         var titleHeight = TextRenderer.MeasureText(e.Graphics, Title, Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
         var detailHeight = TextRenderer.MeasureText(e.Graphics, "Hg", Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
         var titleGap = compact ? 2 : Math.Max(4, Font.Height / 4);
         var detailGap = compact ? 1 : Math.Max(2, Font.Height / 5);
         var minimumValueHeight = TextRenderer.MeasureText(e.Graphics, "Hg", Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
+
+        if (compact && textHeight < titleHeight + titleGap + minimumValueHeight)
+        {
+            DrawCompactLine(e.Graphics, inner, textHeight);
+            DrawProgress(e.Graphics, barRect, Ratio, AccentColor);
+            return;
+        }
+
         var showDetail = !string.IsNullOrWhiteSpace(DetailText)
             && textBottom - inner.Top >= titleHeight + titleGap + minimumValueHeight + detailGap + detailHeight;
 
@@ -355,6 +364,40 @@ internal sealed class MetricCard : Control
         }
 
         return new Font("Segoe UI", minimumSize, FontStyle.Bold);
+    }
+
+    private void DrawCompactLine(Graphics graphics, Rectangle inner, int availableHeight)
+    {
+        var textHeight = Math.Max(1, availableHeight);
+        var gap = Math.Max(8, Math.Min(18, inner.Width / 16));
+        var valueWidth = Math.Max(inner.Width / 3, Math.Min(inner.Width / 2, TextRenderer.MeasureText(graphics, ValueText, Font, Size.Empty, TextFormatFlags.NoPadding).Width + gap));
+        var titleWidth = Math.Max(1, inner.Width - valueWidth - gap);
+        var titleRect = new Rectangle(inner.Left, inner.Top, titleWidth, textHeight);
+        var valueRect = new Rectangle(inner.Right - valueWidth, inner.Top, valueWidth, textHeight);
+        using var titleFont = CreateFittingCompactFont(graphics, Title, Font.Size, FontStyle.Regular, textHeight);
+        using var valueFont = CreateFittingCompactFont(graphics, ValueText, Font.Size + 1F, FontStyle.Bold, textHeight);
+
+        const TextFormatFlags flags = TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine;
+        TextRenderer.DrawText(graphics, Title, titleFont, titleRect, AppTheme.MutedText, flags | TextFormatFlags.Left);
+        TextRenderer.DrawText(graphics, ValueText, valueFont, valueRect, AppTheme.Text, flags | TextFormatFlags.Right);
+    }
+
+    private static Font CreateFittingCompactFont(Graphics graphics, string text, float startingSize, FontStyle style, int availableHeight)
+    {
+        const float minimumSize = 6F;
+        for (var size = startingSize; size > minimumSize; size -= 0.5F)
+        {
+            var candidate = new Font("Segoe UI", size, style);
+            var measured = TextRenderer.MeasureText(graphics, text, candidate, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Height + 2;
+            if (measured <= availableHeight)
+            {
+                return candidate;
+            }
+
+            candidate.Dispose();
+        }
+
+        return new Font("Segoe UI", minimumSize, style);
     }
 
     internal static void DrawProgress(Graphics graphics, Rectangle bounds, double ratio, Color color)
