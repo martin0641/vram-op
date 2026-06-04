@@ -19,12 +19,59 @@ internal static class AppTheme
 
 internal sealed class BufferedFlowLayoutPanel : FlowLayoutPanel
 {
+    private const int SB_HORZ = 0;
+    private const int WS_HSCROLL = 0x00100000;
+
     public BufferedFlowLayoutPanel()
     {
         DoubleBuffered = true;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
         ResizeRedraw = true;
     }
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var createParams = base.CreateParams;
+            createParams.Style &= ~WS_HSCROLL;
+            return createParams;
+        }
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        HideHorizontalScrollBar();
+    }
+
+    protected override void OnLayout(LayoutEventArgs levent)
+    {
+        base.OnLayout(levent);
+        HideHorizontalScrollBar();
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        HideHorizontalScrollBar();
+    }
+
+    private void HideHorizontalScrollBar()
+    {
+        if (!IsHandleCreated)
+        {
+            return;
+        }
+
+        AutoScrollMinSize = Size.Empty;
+        HorizontalScroll.Enabled = false;
+        HorizontalScroll.Visible = false;
+        ShowScrollBar(Handle, SB_HORZ, false);
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowScrollBar(IntPtr hWnd, int wBar, bool bShow);
 }
 
 internal sealed class BufferedPanel : Panel

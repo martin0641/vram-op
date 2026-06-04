@@ -292,6 +292,8 @@ internal sealed class MainForm : Form
         _hostCardsPanel.FlowDirection = FlowDirection.TopDown;
         _hostCardsPanel.WrapContents = false;
         _hostCardsPanel.AutoScroll = true;
+        _hostCardsPanel.AutoScrollMargin = Size.Empty;
+        _hostCardsPanel.AutoScrollMinSize = Size.Empty;
         _hostCardsPanel.BackColor = AppTheme.Surface;
         _hostCardsPanel.HorizontalScroll.Enabled = false;
         _hostCardsPanel.HorizontalScroll.Visible = false;
@@ -470,8 +472,8 @@ internal sealed class MainForm : Form
         }
 
         var compact = _dashboardSplit.Width < 920;
-        var hostMin = compact ? 230 : 310;
-        var processMin = compact ? 340 : 520;
+        var hostMin = compact ? 260 : 340;
+        var processMin = compact ? 320 : 500;
         _dashboardSplit.Panel1MinSize = Math.Min(hostMin, Math.Max(80, _dashboardSplit.Width - 120));
         _dashboardSplit.Panel2MinSize = Math.Min(processMin, Math.Max(160, _dashboardSplit.Width - _dashboardSplit.Panel1MinSize - _dashboardSplit.SplitterWidth));
 
@@ -482,8 +484,8 @@ internal sealed class MainForm : Form
         }
 
         var desired = compact
-            ? Math.Min(320, Math.Max(_dashboardSplit.Panel1MinSize, (int)Math.Round(_dashboardSplit.Width * 0.36)))
-            : Math.Min(460, _dashboardSplit.Width - _dashboardSplit.Panel2MinSize);
+            ? Math.Min(360, Math.Max(_dashboardSplit.Panel1MinSize, (int)Math.Round(_dashboardSplit.Width * 0.4)))
+            : Math.Min(500, _dashboardSplit.Width - _dashboardSplit.Panel2MinSize);
         _dashboardSplit.SplitterDistance = Math.Clamp(desired, _dashboardSplit.Panel1MinSize, maxDistance);
     }
 
@@ -1190,6 +1192,8 @@ internal sealed class MainForm : Form
         }
 
         _hostCardsPanel.SuspendLayout();
+        _hostCardsPanel.AutoScrollMargin = Size.Empty;
+        _hostCardsPanel.AutoScrollMinSize = Size.Empty;
         _hostCardsPanel.HorizontalScroll.Enabled = false;
         _hostCardsPanel.HorizontalScroll.Visible = false;
 
@@ -1225,14 +1229,14 @@ internal sealed class MainForm : Form
             card.Snapshot = snapshot;
             card.IsSelected = snapshot.Id == _selectedHostId;
             var scrollReserve = orderedSnapshots.Length > 1 ? SystemInformation.VerticalScrollBarWidth : 0;
-            card.Width = Math.Max(190, _hostCardsPanel.ClientSize.Width - scrollReserve - 18);
-            var preferredHeight = Math.Max(194, card.Font.Height * 7 + 86);
-            if (orderedSnapshots.Length == 1 && _hostCardsPanel.ClientSize.Height > 206)
+            card.Width = Math.Max(220, _hostCardsPanel.ClientSize.Width - scrollReserve - 28);
+            var preferredHeight = Math.Max(216, card.Font.Height * 7 + 104);
+            if (orderedSnapshots.Length == 1 && _hostCardsPanel.ClientSize.Height > 234)
             {
-                preferredHeight = Math.Min(preferredHeight, _hostCardsPanel.ClientSize.Height - 18);
+                preferredHeight = Math.Min(preferredHeight, _hostCardsPanel.ClientSize.Height - 28);
             }
 
-            card.Height = Math.Max(190, preferredHeight);
+            card.Height = Math.Max(210, preferredHeight);
             card.Invalidate();
 
             if (orderChanged || _hostListDirty)
@@ -1243,6 +1247,8 @@ internal sealed class MainForm : Form
 
         _hostListDirty = false;
         _hostCardsPanel.ResumeLayout();
+        _hostCardsPanel.HorizontalScroll.Enabled = false;
+        _hostCardsPanel.HorizontalScroll.Visible = false;
     }
 
     private void RefreshSelectedHostView(bool forceProcessRefresh = false)
