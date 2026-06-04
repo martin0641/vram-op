@@ -296,15 +296,27 @@ internal sealed class MetricCard : Control
         var compact = Height < 128 || Width < 220;
         var pad = compact ? Math.Max(8, Font.Height / 2) : Math.Max(12, Font.Height);
         var inner = Rectangle.Inflate(rect, -pad, -pad);
+        var barHeight = Math.Max(6, compact ? Font.Height / 3 : Font.Height / 2);
+        var barGap = compact ? 5 : Math.Max(10, Font.Height / 2);
+        var barRect = new Rectangle(inner.Left, inner.Bottom - barHeight, inner.Width, barHeight);
+        var textBottom = Math.Max(inner.Top, barRect.Top - barGap);
+
         var titleHeight = TextRenderer.MeasureText(e.Graphics, Title, Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
         var detailHeight = TextRenderer.MeasureText(e.Graphics, "Hg", Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
-        var barHeight = Math.Max(6, compact ? Font.Height / 3 : Font.Height / 2);
         var titleGap = compact ? 2 : Math.Max(4, Font.Height / 4);
         var detailGap = compact ? 1 : Math.Max(2, Font.Height / 5);
-        var barGap = compact ? 5 : Math.Max(10, Font.Height / 2);
+        var minimumValueHeight = TextRenderer.MeasureText(e.Graphics, "Hg", Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
+        var showDetail = !string.IsNullOrWhiteSpace(DetailText)
+            && textBottom - inner.Top >= titleHeight + titleGap + minimumValueHeight + detailGap + detailHeight;
 
         var valueFontSize = compact ? Font.Size + 2F : Font.Size + 5F;
-        var availableValueHeight = Math.Max(Font.Height + 2, inner.Height - titleHeight - detailHeight - barHeight - titleGap - detailGap - barGap);
+        var availableValueHeight = textBottom - inner.Top - titleHeight - titleGap;
+        if (showDetail)
+        {
+            availableValueHeight -= detailGap + detailHeight;
+        }
+
+        availableValueHeight = Math.Max(minimumValueHeight, availableValueHeight);
         using var valueFont = CreateFittingValueFont(e.Graphics, ValueText, valueFontSize, availableValueHeight);
         var valueHeight = TextRenderer.MeasureText(e.Graphics, ValueText, valueFont, Size.Empty, TextFormatFlags.NoPadding).Height + 4;
         var effectiveValueHeight = Math.Min(valueHeight, availableValueHeight);
@@ -317,17 +329,19 @@ internal sealed class MetricCard : Control
         var valueRect = new Rectangle(inner.Left, y, inner.Width, effectiveValueHeight);
         TextRenderer.DrawText(e.Graphics, ValueText, valueFont, valueRect, AppTheme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
 
-        y += effectiveValueHeight + detailGap;
-        var detailRect = new Rectangle(inner.Left, y, inner.Width, detailHeight);
-        TextRenderer.DrawText(e.Graphics, DetailText, Font, detailRect, AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+        if (showDetail)
+        {
+            y += effectiveValueHeight + detailGap;
+            var detailRect = new Rectangle(inner.Left, y, inner.Width, detailHeight);
+            TextRenderer.DrawText(e.Graphics, DetailText, Font, detailRect, AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        }
 
-        var barRect = new Rectangle(inner.Left, Math.Max(y + detailHeight + barGap, inner.Bottom - barHeight), inner.Width, barHeight);
         DrawProgress(e.Graphics, barRect, Ratio, AccentColor);
     }
 
     private Font CreateFittingValueFont(Graphics graphics, string text, float startingSize, int availableHeight)
     {
-        var minimumSize = Math.Max(8F, Font.Size);
+        const float minimumSize = 7F;
         for (var size = startingSize; size > minimumSize; size -= 0.5F)
         {
             var candidate = new Font("Segoe UI", size, FontStyle.Bold);
