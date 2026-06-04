@@ -69,7 +69,7 @@ internal sealed class TelemetryServer : IAsyncDisposable
         {
             if (!IsAuthorized(context.Request, settings.Username, password))
             {
-                context.Response.Headers.WWWAuthenticate = "Basic realm=\"VRAM Op\"";
+                context.Response.Headers.WWWAuthenticate = "Basic realm=\"VRAM Vue\"";
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 await context.Response.WriteAsync("Unauthorized", _cts.Token);
                 return;
@@ -80,6 +80,11 @@ internal sealed class TelemetryServer : IAsyncDisposable
 
         app.MapGet("/api/telemetry", () => Results.Json(_collector.Read()));
         app.MapPost("/api/processes/{processId:int}/kill", (int processId) => Results.Json(_collector.KillProcess(processId)));
+        app.MapPost("/api/processes/{processId:int}/kill-parent", (int processId) => Results.Json(_collector.KillParentProcess(processId)));
+        app.MapPost("/api/services/{serviceName}/start", (string serviceName) => Results.Json(_collector.ControlService(serviceName, ServiceControlAction.Start)));
+        app.MapPost("/api/services/{serviceName}/stop", (string serviceName) => Results.Json(_collector.ControlService(serviceName, ServiceControlAction.Stop)));
+        app.MapPost("/api/services/{serviceName}/enable", (string serviceName) => Results.Json(_collector.ControlService(serviceName, ServiceControlAction.Enable)));
+        app.MapPost("/api/services/{serviceName}/disable", (string serviceName) => Results.Json(_collector.ControlService(serviceName, ServiceControlAction.Disable)));
 
         await app.StartAsync(_cts.Token);
         _app = app;

@@ -153,6 +153,7 @@ internal sealed class GpuProcessMemoryReader
         var executablePath = string.Empty;
         var notes = string.Empty;
         var canKill = item.ProcessId > 4 && item.ProcessId != Environment.ProcessId;
+        var isProtected = false;
 
         try
         {
@@ -163,7 +164,7 @@ internal sealed class GpuProcessMemoryReader
             if (ProtectedProcessNames.Contains(processName))
             {
                 canKill = false;
-                notes = "Protected Windows process";
+                isProtected = true;
             }
 
             if (process.Id == Environment.ProcessId)
@@ -199,7 +200,8 @@ internal sealed class GpuProcessMemoryReader
             windowTitle,
             executablePath,
             notes,
-            canKill);
+            canKill,
+            isProtected);
     }
 
     private static GpuProcessMemoryRow FlagCounterOutliers(GpuProcessMemoryRow row)
@@ -265,4 +267,5 @@ internal sealed record GpuProcessMemoryRow(
     string WindowTitle,
     string ExecutablePath,
     string Notes,
-    bool CanKill);
+    bool CanKill,
+    bool IsProtected);

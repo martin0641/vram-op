@@ -7,15 +7,18 @@ namespace VramOp;
 
 internal static class CertificateManager
 {
-    private const string CertificateName = "VRAM Op Local Telemetry";
+    private const string CertificateName = "VRAM Vue Local Telemetry";
+    private static readonly string[] CertificateSubjectNames = [CertificateName, "VRAM Op Local Telemetry"];
 
     public static X509Certificate2 GetOrCreateCertificate()
     {
         using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
         store.Open(OpenFlags.ReadWrite);
 
-        var existing = store.Certificates
-            .Find(X509FindType.FindBySubjectName, CertificateName, validOnly: false)
+        var existing = CertificateSubjectNames
+            .SelectMany(name => store.Certificates
+                .Find(X509FindType.FindBySubjectName, name, validOnly: false)
+                .OfType<X509Certificate2>())
             .OfType<X509Certificate2>()
             .Where(cert => cert.HasPrivateKey && cert.NotAfter > DateTimeOffset.Now.AddDays(30))
             .OrderByDescending(cert => cert.NotAfter)

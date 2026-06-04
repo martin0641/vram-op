@@ -40,8 +40,32 @@ internal sealed class RemoteTelemetryClient
 
     public async Task<KillProcessResponse> KillProcessAsync(RemoteHostConfig host, int processId, CancellationToken cancellationToken)
     {
+        return await SendKillRequestAsync(host, $"{host.BaseUrl}/api/processes/{processId}/kill", cancellationToken);
+    }
+
+    public async Task<KillProcessResponse> KillParentProcessAsync(RemoteHostConfig host, int processId, CancellationToken cancellationToken)
+    {
+        return await SendKillRequestAsync(host, $"{host.BaseUrl}/api/processes/{processId}/kill-parent", cancellationToken);
+    }
+
+    public async Task<KillProcessResponse> ControlServiceAsync(RemoteHostConfig host, string serviceName, ServiceControlAction action, CancellationToken cancellationToken)
+    {
+        var actionSegment = action switch
+        {
+            ServiceControlAction.Start => "start",
+            ServiceControlAction.Stop => "stop",
+            ServiceControlAction.Enable => "enable",
+            ServiceControlAction.Disable => "disable",
+            _ => throw new ArgumentOutOfRangeException(nameof(action), action, null)
+        };
+        var encodedServiceName = Uri.EscapeDataString(serviceName);
+        return await SendKillRequestAsync(host, $"{host.BaseUrl}/api/services/{encodedServiceName}/{actionSegment}", cancellationToken);
+    }
+
+    private async Task<KillProcessResponse> SendKillRequestAsync(RemoteHostConfig host, string url, CancellationToken cancellationToken)
+    {
         using var client = CreateClient(host, _ => { });
-        using var response = await client.PostAsync($"{host.BaseUrl}/api/processes/{processId}/kill", content: null, cancellationToken);
+        using var response = await client.PostAsync(url, content: null, cancellationToken);
 
         if (response.StatusCode == HttpStatusCode.Unauthorized)
         {
@@ -78,7 +102,9 @@ internal sealed class RemoteTelemetryClient
                         StringComparison.OrdinalIgnoreCase);
                 }
 
-                return errors == SslPolicyErrors.None || cert.Subject.Contains("VRAM Op", StringComparison.OrdinalIgnoreCase);
+                return errors == SslPolicyErrors.None
+                    || cert.Subject.Contains("VRAM Vue", StringComparison.OrdinalIgnoreCase)
+                    || cert.Subject.Contains("VRAM Op", StringComparison.OrdinalIgnoreCase);
             }
         };
 
@@ -90,7 +116,7 @@ internal sealed class RemoteTelemetryClient
         var rawCredentials = $"{host.Username}:{host.GetPassword()}";
         var encodedCredentials = Convert.ToBase64String(Encoding.UTF8.GetBytes(rawCredentials));
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", encodedCredentials);
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("VRAM-Op/1.0");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("VRAM-Vue/1.0");
         return client;
     }
 

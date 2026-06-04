@@ -30,7 +30,23 @@ internal sealed record GpuProcessInfo(
     string WindowTitle,
     string ExecutablePath,
     string Notes,
-    bool CanKill);
+    bool CanKill,
+    string RestartBehavior,
+    string ServiceName,
+    string ServiceDisplayName,
+    string ServiceState,
+    string ServiceStartMode,
+    int ServiceCount,
+    int? ParentProcessId,
+    string ParentProcessName);
+
+internal enum ServiceControlAction
+{
+    Start,
+    Stop,
+    Enable,
+    Disable
+}
 
 internal sealed record KillProcessRequest(int ProcessId);
 

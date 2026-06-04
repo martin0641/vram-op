@@ -6,6 +6,8 @@ namespace VramOp;
 
 internal sealed class MainForm : Form
 {
+    private const string AppDisplayName = "VRAM Vue";
+
     private readonly AppSettings _settings;
     private readonly SystemTelemetryCollector _collector = new();
     private readonly TelemetryServer _server;
@@ -28,10 +30,16 @@ internal sealed class MainForm : Form
     private readonly Label _statusLabel = new BufferedLabel();
     private readonly Label _listenerStatusLabel = new BufferedLabel();
     private readonly MaskedTextBox _intervalBox = new("9999");
-    private readonly RoundedButton _killButton = new() { Text = "Kill selected", Width = 148 };
+    private readonly RoundedButton _killButton = new() { Text = "Kill selected", Width = 132 };
+    private readonly RoundedButton _killParentButton = new() { Text = "End parent", Width = 124 };
+    private readonly RoundedButton _stopServiceButton = new() { Text = "Stop svc", Width = 96 };
+    private readonly RoundedButton _startServiceButton = new() { Text = "Start svc", Width = 96 };
+    private readonly RoundedButton _disableServiceButton = new() { Text = "Disable svc", Width = 112 };
+    private readonly RoundedButton _enableServiceButton = new() { Text = "Enable svc", Width = 104 };
     private readonly RoundedButton _dashboardButton = new() { Text = "Dashboard", Width = 160 };
     private readonly RoundedButton _settingsButton = new() { Text = "Settings", Width = 140 };
     private readonly CheckBox _listenerEnabledBox = new();
+    private readonly CheckBox _confirmKillsBox = new();
     private readonly NumericUpDown _listenerPortBox = new();
     private readonly TextBox _listenerUserBox = new();
     private readonly TextBox _listenerPasswordBox = new();
@@ -84,7 +92,7 @@ internal sealed class MainForm : Form
 
     private void BuildUi()
     {
-        Text = "VRAM Op";
+        Text = AppDisplayName;
         Icon = _appIcon;
         BackColor = AppTheme.Background;
         ForeColor = AppTheme.Text;
@@ -137,7 +145,7 @@ internal sealed class MainForm : Form
         var title = new Label
         {
             Dock = DockStyle.Fill,
-            Text = "VRAM Op",
+            Text = AppDisplayName,
             Font = new Font("Segoe UI", 16F, FontStyle.Bold),
             ForeColor = AppTheme.Text,
             TextAlign = ContentAlignment.MiddleLeft
@@ -273,6 +281,7 @@ internal sealed class MainForm : Form
             FlowDirection = FlowDirection.RightToLeft,
             WrapContents = false,
             BackColor = AppTheme.Background,
+            AutoScroll = true,
             Padding = new Padding(0, 8, 0, 0)
         };
         var refreshButton = new RoundedButton { Text = "Refresh now", Width = 132 };
@@ -281,6 +290,11 @@ internal sealed class MainForm : Form
         hideButton.Click += (_, _) => HideToTray(showTip: true);
         actions.Controls.Add(hideButton);
         actions.Controls.Add(refreshButton);
+        actions.Controls.Add(_enableServiceButton);
+        actions.Controls.Add(_disableServiceButton);
+        actions.Controls.Add(_startServiceButton);
+        actions.Controls.Add(_stopServiceButton);
+        actions.Controls.Add(_killParentButton);
         actions.Controls.Add(_killButton);
 
         dashboard.Controls.Add(metrics, 0, 0);
@@ -307,7 +321,7 @@ internal sealed class MainForm : Form
         _processGrid.ReadOnly = true;
         _processGrid.RowHeadersVisible = false;
         _processGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-        _processGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        _processGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
         _processGrid.Font = new Font("Segoe UI", 9F);
         _processGrid.ColumnHeadersDefaultCellStyle.BackColor = AppTheme.SurfaceRaised;
         _processGrid.ColumnHeadersDefaultCellStyle.ForeColor = AppTheme.Text;
@@ -316,16 +330,17 @@ internal sealed class MainForm : Form
         _processGrid.RowTemplate.Height = Math.Max(34, _processGrid.Font.Height + 14);
         _processGrid.DefaultCellStyle.BackColor = AppTheme.Surface;
         _processGrid.DefaultCellStyle.ForeColor = AppTheme.Text;
-        _processGrid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(37, 74, 119);
+        _processGrid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(46, 55, 70);
         _processGrid.DefaultCellStyle.SelectionForeColor = AppTheme.Text;
         _processGrid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(25, 31, 40);
 
-        AddProcessColumn(nameof(GpuProcessInfo.ProcessName), "Process", 1.35F, DataGridViewContentAlignment.MiddleLeft);
-        AddProcessColumn(nameof(GpuProcessInfo.ProcessId), "PID", 0.55F, DataGridViewContentAlignment.MiddleRight);
-        AddProcessColumn(nameof(GpuProcessInfo.LocalVramBytes), "Local VRAM", 0.9F, DataGridViewContentAlignment.MiddleRight);
-        AddProcessColumn(nameof(GpuProcessInfo.SharedBytes), "Shared", 0.8F, DataGridViewContentAlignment.MiddleRight);
-        AddProcessColumn(nameof(GpuProcessInfo.WindowTitle), "Window", 1.4F, DataGridViewContentAlignment.MiddleLeft);
-        AddProcessColumn(nameof(GpuProcessInfo.Notes), "Notes", 1.0F, DataGridViewContentAlignment.MiddleLeft);
+        AddProcessColumn(nameof(GpuProcessInfo.ProcessName), "Process", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleLeft);
+        AddProcessColumn(nameof(GpuProcessInfo.ProcessId), "PID", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleRight);
+        AddProcessColumn(nameof(GpuProcessInfo.LocalVramBytes), "VRAM", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleRight);
+        AddProcessColumn(nameof(GpuProcessInfo.SharedBytes), "Shared", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleRight);
+        AddProcessColumn(nameof(GpuProcessInfo.RestartBehavior), "Restart", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleLeft);
+        AddProcessColumn(nameof(GpuProcessInfo.WindowTitle), "Window", DataGridViewAutoSizeColumnMode.Fill, 65, DataGridViewContentAlignment.MiddleLeft);
+        AddProcessColumn(nameof(GpuProcessInfo.Notes), "Notes", DataGridViewAutoSizeColumnMode.Fill, 35, DataGridViewContentAlignment.MiddleLeft);
 
         _processGrid.CellFormatting += (_, e) =>
         {
@@ -343,14 +358,21 @@ internal sealed class MainForm : Form
         };
     }
 
-    private void AddProcessColumn(string propertyName, string header, float fillWeight, DataGridViewContentAlignment alignment)
+    private void AddProcessColumn(
+        string propertyName,
+        string header,
+        DataGridViewAutoSizeColumnMode autoSizeMode,
+        float fillWeight,
+        DataGridViewContentAlignment alignment)
     {
         var column = new DataGridViewTextBoxColumn
         {
             DataPropertyName = propertyName,
             HeaderText = header,
             Name = propertyName,
-            FillWeight = fillWeight,
+            AutoSizeMode = autoSizeMode,
+            FillWeight = fillWeight <= 0 ? 100 : fillWeight,
+            MinimumWidth = autoSizeMode == DataGridViewAutoSizeColumnMode.Fill ? 80 : 48,
             SortMode = DataGridViewColumnSortMode.Automatic
         };
         column.DefaultCellStyle.Alignment = alignment;
@@ -404,10 +426,16 @@ internal sealed class MainForm : Form
         layout.Controls.Add(_listenerEnabledBox, 0, 1);
         layout.SetColumnSpan(_listenerEnabledBox, 2);
 
-        AddLabeledControl(layout, "Update every", CreateIntervalEditor(), 2);
-        AddLabeledControl(layout, "Port", _listenerPortBox, 3);
-        AddLabeledControl(layout, "Username", _listenerUserBox, 4);
-        AddLabeledControl(layout, "Password", _listenerPasswordBox, 5);
+        _confirmKillsBox.Text = "Confirm before ending tasks";
+        _confirmKillsBox.ForeColor = AppTheme.Text;
+        _confirmKillsBox.AutoSize = true;
+        layout.Controls.Add(_confirmKillsBox, 0, 2);
+        layout.SetColumnSpan(_confirmKillsBox, 2);
+
+        AddLabeledControl(layout, "Update every", CreateIntervalEditor(), 3);
+        AddLabeledControl(layout, "Port", _listenerPortBox, 4);
+        AddLabeledControl(layout, "Username", _listenerUserBox, 5);
+        AddLabeledControl(layout, "Password", _listenerPasswordBox, 6);
 
         _listenerPortBox.Minimum = 1024;
         _listenerPortBox.Maximum = 65535;
@@ -423,10 +451,10 @@ internal sealed class MainForm : Form
 
         var saveButton = new RoundedButton { Text = "Save and restart listener", Width = 190 };
         saveButton.Click += async (_, _) => await SaveListenerSettingsAsync();
-        layout.Controls.Add(saveButton, 1, 6);
+        layout.Controls.Add(saveButton, 1, 7);
 
         var note = CreateNoteLabel("Each host uses a local self-signed certificate and requires TLS 1.3. Remote clients pin the certificate hash after the first successful connection.");
-        layout.Controls.Add(note, 0, 7);
+        layout.Controls.Add(note, 0, 8);
         layout.SetColumnSpan(note, 2);
 
         panel.Controls.Add(layout);
@@ -651,10 +679,15 @@ internal sealed class MainForm : Form
         };
         _intervalBox.Enter += (_, _) => _intervalBox.SelectAll();
         _killButton.Click += async (_, _) => await KillSelectedProcessAsync();
+        _killParentButton.Click += async (_, _) => await KillSelectedParentProcessAsync();
+        _stopServiceButton.Click += async (_, _) => await ControlSelectedServiceAsync(ServiceControlAction.Stop);
+        _startServiceButton.Click += async (_, _) => await ControlSelectedServiceAsync(ServiceControlAction.Start);
+        _disableServiceButton.Click += async (_, _) => await ControlSelectedServiceAsync(ServiceControlAction.Disable);
+        _enableServiceButton.Click += async (_, _) => await ControlSelectedServiceAsync(ServiceControlAction.Enable);
         _dashboardButton.Click += (_, _) => ShowDashboardPage();
         _settingsButton.Click += (_, _) => ShowSettingsPage();
         _remoteListBox.SelectedIndexChanged += (_, _) => PopulateRemoteEditorFromSelection();
-        _processGrid.SelectionChanged += (_, _) => UpdateKillButton();
+        _processGrid.SelectionChanged += (_, _) => UpdateActionButtons();
     }
 
     private void LoadSettingsIntoControls()
@@ -664,6 +697,7 @@ internal sealed class MainForm : Form
         _pollTimer.Interval = _settings.UpdateIntervalMs;
 
         _listenerEnabledBox.Checked = _settings.ListenerEnabled;
+        _confirmKillsBox.Checked = _settings.ConfirmTaskKills;
         _listenerPortBox.Value = Math.Clamp(_settings.ListenerPort, 1024, 65535);
         _listenerUserBox.Text = _settings.Username;
         _listenerPasswordBox.Text = _settings.GetPassword();
@@ -708,7 +742,7 @@ internal sealed class MainForm : Form
 
         _notifyIcon.ContextMenuStrip = trayMenu;
         _notifyIcon.Icon = _appIcon;
-        _notifyIcon.Text = "VRAM Op";
+        _notifyIcon.Text = AppDisplayName;
         _notifyIcon.Visible = true;
         _notifyIcon.DoubleClick += (_, _) => ShowFromTray();
     }
@@ -921,20 +955,20 @@ internal sealed class MainForm : Form
         {
             UpdateMetricCards(null);
             UpdateProcessRows(Array.Empty<GpuProcessInfo>(), forceProcessRefresh: true);
-            UpdateKillButton();
+            UpdateActionButtons();
             return;
         }
 
         UpdateMetricCards(selected);
         UpdateProcessRows(selected.TopGpuProcesses, forceProcessRefresh || _lastRenderedProcessHostId != selected.Id);
         _lastRenderedProcessHostId = selected.Id;
-        UpdateKillButton();
+        UpdateActionButtons();
     }
 
     private void UpdateProcessRows(IReadOnlyList<GpuProcessInfo> rows, bool forceProcessRefresh)
     {
         var signature = string.Join("|", rows.Select(row =>
-            $"{row.ProcessId}:{row.ProcessName}:{row.LocalVramBytes}:{row.SharedBytes}:{row.WindowTitle}:{row.Notes}:{row.CanKill}"));
+            $"{row.ProcessId}:{row.ProcessName}:{row.LocalVramBytes}:{row.SharedBytes}:{row.RestartBehavior}:{row.ServiceName}:{row.ServiceState}:{row.ServiceStartMode}:{row.ServiceCount}:{row.ParentProcessId}:{row.ParentProcessName}:{row.WindowTitle}:{row.Notes}:{row.CanKill}"));
 
         if (!forceProcessRefresh && string.Equals(signature, _lastRenderedProcessSignature, StringComparison.Ordinal))
         {
@@ -952,12 +986,16 @@ internal sealed class MainForm : Form
         _processBinding.DataSource = rows.ToList();
         _lastRenderedProcessSignature = signature;
 
+        _processGrid.ClearSelection();
+        _processGrid.CurrentCell = null;
+
         if (selectedPid != 0)
         {
             foreach (DataGridViewRow gridRow in _processGrid.Rows)
             {
                 if (gridRow.DataBoundItem is GpuProcessInfo process && process.ProcessId == selectedPid)
                 {
+                    _processGrid.CurrentCell = gridRow.Cells[0];
                     gridRow.Selected = true;
                     break;
                 }
@@ -1020,39 +1058,149 @@ internal sealed class MainForm : Form
             return;
         }
 
-        var confirmation = MessageBox.Show(
-            this,
-            $"Terminate {row.ProcessName} ({row.ProcessId}) on {host.DisplayName}?{Environment.NewLine}{Environment.NewLine}Local VRAM reported: {Formatters.Bytes(row.LocalVramBytes)}",
-            "Kill GPU task?",
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Warning,
-            MessageBoxDefaultButton.Button2);
-
-        if (confirmation != DialogResult.Yes)
+        if (!ConfirmTaskKill(
+            $"Terminate {row.ProcessName} ({row.ProcessId}) on {host.DisplayName}?{Environment.NewLine}{Environment.NewLine}VRAM reported: {Formatters.Bytes(row.LocalVramBytes)}",
+            "Kill GPU task?"))
         {
             return;
         }
 
-        KillProcessResponse result;
-        if (host.IsLocal)
-        {
-            result = _collector.KillProcess(row.ProcessId);
-        }
-        else
-        {
-            var config = _settings.RemoteHosts.FirstOrDefault(item => item.Id == host.Id);
-            if (config is null)
-            {
-                result = new KillProcessResponse(false, "Remote host configuration is missing.");
-            }
-            else
-            {
-                result = await _remoteClient.KillProcessAsync(config, row.ProcessId, CancellationToken.None);
-            }
-        }
+        var result = await RunHostActionAsync(
+            host,
+            () => _collector.KillProcess(row.ProcessId),
+            config => _remoteClient.KillProcessAsync(config, row.ProcessId, CancellationToken.None));
 
         MessageBox.Show(this, result.Message, Text, MessageBoxButtons.OK, result.Success ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
         await RefreshAllHostsAsync();
+    }
+
+    private async Task KillSelectedParentProcessAsync()
+    {
+        var row = _processGrid.SelectedRows
+            .Cast<DataGridViewRow>()
+            .Select(item => item.DataBoundItem)
+            .OfType<GpuProcessInfo>()
+            .FirstOrDefault();
+
+        if (row is null || _selectedHostId is null || !_hostSnapshots.TryGetValue(_selectedHostId.Value, out var host))
+        {
+            return;
+        }
+
+        if (row.ParentProcessId is null)
+        {
+            MessageBox.Show(this, "That process does not have a killable parent process.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var parentName = string.IsNullOrWhiteSpace(row.ParentProcessName)
+            ? $"PID {row.ParentProcessId.Value}"
+            : $"{row.ParentProcessName} ({row.ParentProcessId.Value})";
+
+        if (!ConfirmTaskKill(
+            $"Terminate parent {parentName} for {row.ProcessName} ({row.ProcessId}) on {host.DisplayName}?{Environment.NewLine}{Environment.NewLine}This may close more than the selected GPU task.",
+            "End parent process?"))
+        {
+            return;
+        }
+
+        var result = await RunHostActionAsync(
+            host,
+            () => _collector.KillParentProcess(row.ProcessId),
+            config => _remoteClient.KillParentProcessAsync(config, row.ProcessId, CancellationToken.None));
+
+        MessageBox.Show(this, result.Message, Text, MessageBoxButtons.OK, result.Success ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+        await RefreshAllHostsAsync();
+    }
+
+    private async Task ControlSelectedServiceAsync(ServiceControlAction action)
+    {
+        var row = _processGrid.SelectedRows
+            .Cast<DataGridViewRow>()
+            .Select(item => item.DataBoundItem)
+            .OfType<GpuProcessInfo>()
+            .FirstOrDefault();
+
+        if (row is null || _selectedHostId is null || !_hostSnapshots.TryGetValue(_selectedHostId.Value, out var host))
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(row.ServiceName))
+        {
+            MessageBox.Show(this, "That process is not currently associated with a Windows service.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (!ConfirmServiceAction(row, host, action))
+        {
+            return;
+        }
+
+        var serviceName = row.ServiceName;
+        var result = await RunHostActionAsync(
+            host,
+            () => _collector.ControlService(serviceName, action),
+            config => _remoteClient.ControlServiceAsync(config, serviceName, action, CancellationToken.None));
+
+        MessageBox.Show(this, result.Message, Text, MessageBoxButtons.OK, result.Success ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+        await RefreshAllHostsAsync();
+    }
+
+    private async Task<KillProcessResponse> RunHostActionAsync(
+        HostSnapshot host,
+        Func<KillProcessResponse> localAction,
+        Func<RemoteHostConfig, Task<KillProcessResponse>> remoteAction)
+    {
+        if (host.IsLocal)
+        {
+            return localAction();
+        }
+
+        var config = _settings.RemoteHosts.FirstOrDefault(item => item.Id == host.Id);
+        return config is null
+            ? new KillProcessResponse(false, "Remote host configuration is missing.")
+            : await remoteAction(config);
+    }
+
+    private bool ConfirmTaskKill(string message, string caption)
+    {
+        if (!_settings.ConfirmTaskKills)
+        {
+            return true;
+        }
+
+        return MessageBox.Show(
+            this,
+            message,
+            caption,
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning,
+            MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+    }
+
+    private bool ConfirmServiceAction(GpuProcessInfo row, HostSnapshot host, ServiceControlAction action)
+    {
+        if (action is ServiceControlAction.Start or ServiceControlAction.Enable)
+        {
+            return true;
+        }
+
+        var serviceLabel = string.IsNullOrWhiteSpace(row.ServiceDisplayName)
+            ? row.ServiceName
+            : $"{row.ServiceDisplayName} ({row.ServiceName})";
+        var verb = action == ServiceControlAction.Stop ? "Stop" : "Disable";
+        var extra = action == ServiceControlAction.Disable
+            ? $"{Environment.NewLine}{Environment.NewLine}Disabled services will not automatically start again until re-enabled."
+            : string.Empty;
+
+        return MessageBox.Show(
+            this,
+            $"{verb} service {serviceLabel} on {host.DisplayName}?{extra}",
+            $"{verb} Windows service?",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning,
+            MessageBoxDefaultButton.Button2) == DialogResult.Yes;
     }
 
     private async Task SaveListenerSettingsAsync()
@@ -1068,6 +1216,7 @@ internal sealed class MainForm : Form
         }
 
         _settings.ListenerEnabled = _listenerEnabledBox.Checked;
+        _settings.ConfirmTaskKills = _confirmKillsBox.Checked;
         _settings.ListenerPort = (int)_listenerPortBox.Value;
         _settings.Username = username;
         _settings.SetPassword(password);
@@ -1176,14 +1325,25 @@ internal sealed class MainForm : Form
         _remoteThumbprintBox.Text = remote.TrustedCertificateThumbprint;
     }
 
-    private void UpdateKillButton()
+    private void UpdateActionButtons()
     {
         var row = _processGrid.SelectedRows
             .Cast<DataGridViewRow>()
             .Select(item => item.DataBoundItem)
             .OfType<GpuProcessInfo>()
             .FirstOrDefault();
+
         _killButton.Enabled = row?.CanKill == true;
+        _killParentButton.Enabled = row?.ParentProcessId is not null;
+
+        var hasService = !string.IsNullOrWhiteSpace(row?.ServiceName);
+        var serviceStopped = string.Equals(row?.ServiceState, "Stopped", StringComparison.OrdinalIgnoreCase);
+        var serviceDisabled = string.Equals(row?.ServiceStartMode, "Disabled", StringComparison.OrdinalIgnoreCase);
+
+        _stopServiceButton.Enabled = hasService && !serviceStopped;
+        _startServiceButton.Enabled = hasService && serviceStopped && !serviceDisabled;
+        _disableServiceButton.Enabled = hasService && !serviceDisabled;
+        _enableServiceButton.Enabled = hasService && serviceDisabled;
     }
 
     private void UpdateListenerStatus()
@@ -1193,8 +1353,8 @@ internal sealed class MainForm : Form
             : $" | Cert {ShortThumbprint(_server.CertificateThumbprint)}";
         SetListenerStatusText($"{_server.Status}{thumbprint}");
         SetTrayText(_hostSnapshots.TryGetValue(_localHostId, out var local)
-            ? $"VRAM Op - VRAM {Formatters.Bytes(local.VramUsedBytes)}"
-            : "VRAM Op");
+            ? $"{AppDisplayName} - VRAM {Formatters.Bytes(local.VramUsedBytes)}"
+            : AppDisplayName);
     }
 
     private static string ShortThumbprint(string thumbprint) =>
@@ -1229,7 +1389,7 @@ internal sealed class MainForm : Form
 
         if (showTip && !_hasShownTrayTip)
         {
-            _notifyIcon.ShowBalloonTip(1800, "VRAM Op is still running", "Double-click the tray icon to reopen it.", ToolTipIcon.Info);
+            _notifyIcon.ShowBalloonTip(1800, $"{AppDisplayName} is still running", "Double-click the tray icon to reopen it.", ToolTipIcon.Info);
             _hasShownTrayTip = true;
         }
     }
