@@ -29,8 +29,8 @@ internal sealed class MainForm : Form
     private readonly Label _listenerStatusLabel = new BufferedLabel();
     private readonly MaskedTextBox _intervalBox = new("9999");
     private readonly RoundedButton _killButton = new() { Text = "Kill selected", Width = 148 };
-    private readonly RoundedButton _dashboardButton = new() { Text = "Dashboard", Width = 138 };
-    private readonly RoundedButton _settingsButton = new() { Text = "Settings", Width = 118 };
+    private readonly RoundedButton _dashboardButton = new() { Text = "Dashboard", Width = 160 };
+    private readonly RoundedButton _settingsButton = new() { Text = "Settings", Width = 140 };
     private readonly CheckBox _listenerEnabledBox = new();
     private readonly NumericUpDown _listenerPortBox = new();
     private readonly TextBox _listenerUserBox = new();
@@ -104,7 +104,7 @@ internal sealed class MainForm : Form
             ColumnCount = 1,
             RowCount = 3
         };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 96));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
 
@@ -130,9 +130,9 @@ internal sealed class MainForm : Form
             BackColor = AppTheme.Background
         };
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 280));
-        header.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
-        header.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 340));
+        header.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
+        header.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
 
         var title = new Label
         {
@@ -196,7 +196,7 @@ internal sealed class MainForm : Form
             RowCount = 3,
             BackColor = AppTheme.Background
         };
-        dashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, 150));
+        dashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, 176));
         dashboard.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         dashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
 

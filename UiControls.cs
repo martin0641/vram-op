@@ -74,6 +74,7 @@ internal sealed class RoundedPanel : Panel
     public RoundedPanel()
     {
         DoubleBuffered = true;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
         BackColor = AppTheme.Surface;
         Padding = new Padding(14);
         ResizeRedraw = true;
@@ -81,31 +82,19 @@ internal sealed class RoundedPanel : Panel
 
     protected override void OnPaint(PaintEventArgs e)
     {
-        base.OnPaint(e);
-
         var rect = ClientRectangle;
         rect.Width -= 1;
         rect.Height -= 1;
 
-        using var path = RoundedPath(rect, CornerRadius);
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var backdrop = new SolidBrush(Parent?.BackColor ?? AppTheme.Background);
+        e.Graphics.FillRectangle(backdrop, ClientRectangle);
+
+        using var path = RoundedPath(rect, CornerRadius);
         using var fill = new SolidBrush(BackColor);
         using var border = new Pen(BorderColor);
         e.Graphics.FillPath(fill, path);
         e.Graphics.DrawPath(border, path);
-    }
-
-    protected override void OnResize(EventArgs eventargs)
-    {
-        base.OnResize(eventargs);
-
-        if (Width <= 0 || Height <= 0)
-        {
-            return;
-        }
-
-        using var path = RoundedPath(new Rectangle(0, 0, Width, Height), CornerRadius);
-        Region = new Region(path);
     }
 
     private static GraphicsPath RoundedPath(Rectangle bounds, int radius)
@@ -134,6 +123,7 @@ internal sealed class RoundedButton : Button
 
     public RoundedButton()
     {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
         FlatStyle = FlatStyle.Flat;
         FlatAppearance.BorderSize = 0;
         ForeColor = AppTheme.Text;
@@ -186,6 +176,9 @@ internal sealed class RoundedButton : Button
         rect.Width -= 1;
         rect.Height -= 1;
 
+        using var backdrop = new SolidBrush(Parent?.BackColor ?? AppTheme.Background);
+        pevent.Graphics.FillRectangle(backdrop, ClientRectangle);
+
         var color = _pressed ? PressedColor : _hovered ? HoverColor : FillColor;
         if (!Enabled)
         {
@@ -203,7 +196,7 @@ internal sealed class RoundedButton : Button
             pevent.Graphics,
             Text,
             Font,
-            rect,
+            Rectangle.Inflate(rect, -Padding.Left, 0),
             textColor,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
     }
@@ -232,6 +225,7 @@ internal sealed class MetricCard : Control
     public MetricCard()
     {
         DoubleBuffered = true;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
         MinimumSize = new Size(180, 132);
         Margin = new Padding(0, 0, 10, 10);
         Font = new Font("Segoe UI", 9F);
@@ -243,6 +237,8 @@ internal sealed class MetricCard : Control
         rect.Width -= 1;
         rect.Height -= 1;
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var backdrop = new SolidBrush(Parent?.BackColor ?? AppTheme.Background);
+        e.Graphics.FillRectangle(backdrop, ClientRectangle);
 
         using var path = RoundedPath(rect, 16);
         using var fill = new SolidBrush(AppTheme.Surface);
@@ -257,10 +253,8 @@ internal sealed class MetricCard : Control
         var barHeight = Math.Max(8, Font.Height / 2);
         var barGap = Math.Max(10, Font.Height / 2);
 
-        using var valueFont = new Font("Segoe UI", 16F, FontStyle.Bold);
+        using var valueFont = new Font("Segoe UI", Font.Size + 5F, FontStyle.Bold);
         var valueHeight = TextRenderer.MeasureText(e.Graphics, ValueText, valueFont, Size.Empty, TextFormatFlags.NoPadding).Height + 4;
-        var availableValueHeight = Math.Max(valueHeight, inner.Height - titleHeight - detailHeight - barHeight - (barGap * 3));
-        valueHeight = Math.Min(valueHeight, availableValueHeight);
 
         var y = inner.Top;
         var titleRect = new Rectangle(inner.Left, y, inner.Width, titleHeight);
@@ -313,6 +307,7 @@ internal sealed class HostCard : Control
     public HostCard()
     {
         DoubleBuffered = true;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
         Cursor = Cursors.Hand;
         Width = 330;
         Height = 208;
@@ -324,6 +319,8 @@ internal sealed class HostCard : Control
     {
         if (Snapshot is null)
         {
+            using var emptyBackdrop = new SolidBrush(Parent?.BackColor ?? AppTheme.Surface);
+            e.Graphics.FillRectangle(emptyBackdrop, ClientRectangle);
             return;
         }
 
@@ -331,6 +328,9 @@ internal sealed class HostCard : Control
         var rect = ClientRectangle;
         rect.Width -= 1;
         rect.Height -= 1;
+
+        using var backdrop = new SolidBrush(Parent?.BackColor ?? AppTheme.Surface);
+        e.Graphics.FillRectangle(backdrop, ClientRectangle);
 
         using var path = RoundedPath(rect, 16);
         using var fill = new SolidBrush(IsSelected ? Color.FromArgb(30, 42, 59) : AppTheme.Surface);
