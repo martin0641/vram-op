@@ -370,6 +370,7 @@ internal sealed class SystemTelemetryCollector : IDisposable
         try
         {
             var wmiAdapters = ReadWmiGpuAdapters();
+            var seenAdapters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var factoryId = typeof(IDXGIFactory1).GUID;
             var hr = CreateDXGIFactory1(ref factoryId, out factory);
             if (hr < 0 || factory is null)
@@ -401,6 +402,12 @@ internal sealed class SystemTelemetryCollector : IDisposable
 
                     var dedicatedBytes = UIntPtrToInt64(description.DedicatedVideoMemory);
                     if (dedicatedBytes <= 0)
+                    {
+                        continue;
+                    }
+
+                    var adapterKey = $"{description.AdapterLuid.HighPart:X8}:{description.AdapterLuid.LowPart:X8}";
+                    if (!seenAdapters.Add(adapterKey))
                     {
                         continue;
                     }
