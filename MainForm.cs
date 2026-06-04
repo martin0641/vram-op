@@ -27,7 +27,7 @@ internal sealed class MainForm : Form
     private readonly MetricCard _vramCard = new() { Title = "VRAM", AccentColor = AppTheme.Danger };
     private readonly Label _statusLabel = new BufferedLabel();
     private readonly Label _listenerStatusLabel = new BufferedLabel();
-    private readonly NumericUpDown _intervalBox = new();
+    private readonly MaskedTextBox _intervalBox = new("9999");
     private readonly RoundedButton _killButton = new() { Text = "Kill selected", Width = 148 };
     private readonly RoundedButton _dashboardButton = new() { Text = "Dashboard", Width = 138 };
     private readonly RoundedButton _settingsButton = new() { Text = "Settings", Width = 118 };
@@ -129,9 +129,8 @@ internal sealed class MainForm : Form
             RowCount = 2,
             BackColor = AppTheme.Background
         };
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 27));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 21));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 280));
         header.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
         header.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
 
@@ -149,38 +148,6 @@ internal sealed class MainForm : Form
         _listenerStatusLabel.TextAlign = ContentAlignment.MiddleLeft;
         _listenerStatusLabel.Text = "Listener starting";
 
-        var intervalPanel = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.RightToLeft,
-            WrapContents = false,
-            BackColor = AppTheme.Background
-        };
-        var intervalLabel = new Label
-        {
-            Text = "ms",
-            ForeColor = AppTheme.MutedText,
-            AutoSize = true,
-            Margin = new Padding(6, 12, 0, 0)
-        };
-        _intervalBox.Minimum = 250;
-        _intervalBox.Maximum = 60000;
-        _intervalBox.Increment = 250;
-        _intervalBox.Width = 112;
-        _intervalBox.Height = 34;
-        _intervalBox.BackColor = AppTheme.Surface;
-        _intervalBox.ForeColor = AppTheme.Text;
-        _intervalBox.BorderStyle = BorderStyle.FixedSingle;
-        intervalPanel.Controls.Add(intervalLabel);
-        intervalPanel.Controls.Add(_intervalBox);
-        intervalPanel.Controls.Add(new Label
-        {
-            Text = "Update every",
-            ForeColor = AppTheme.MutedText,
-            AutoSize = true,
-            Margin = new Padding(0, 12, 8, 0)
-        });
-
         var nav = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -193,9 +160,7 @@ internal sealed class MainForm : Form
 
         header.Controls.Add(title, 0, 0);
         header.Controls.Add(_listenerStatusLabel, 0, 1);
-        header.Controls.Add(intervalPanel, 1, 0);
-        header.SetRowSpan(intervalPanel, 2);
-        header.Controls.Add(nav, 2, 0);
+        header.Controls.Add(nav, 1, 0);
         header.SetRowSpan(nav, 2);
         return header;
     }
@@ -439,9 +404,10 @@ internal sealed class MainForm : Form
         layout.Controls.Add(_listenerEnabledBox, 0, 1);
         layout.SetColumnSpan(_listenerEnabledBox, 2);
 
-        AddLabeledControl(layout, "Port", _listenerPortBox, 2);
-        AddLabeledControl(layout, "Username", _listenerUserBox, 3);
-        AddLabeledControl(layout, "Password", _listenerPasswordBox, 4);
+        AddLabeledControl(layout, "Update every", CreateIntervalEditor(), 2);
+        AddLabeledControl(layout, "Port", _listenerPortBox, 3);
+        AddLabeledControl(layout, "Username", _listenerUserBox, 4);
+        AddLabeledControl(layout, "Password", _listenerPasswordBox, 5);
 
         _listenerPortBox.Minimum = 1024;
         _listenerPortBox.Maximum = 65535;
@@ -455,13 +421,51 @@ internal sealed class MainForm : Form
 
         var saveButton = new RoundedButton { Text = "Save and restart listener", Width = 190 };
         saveButton.Click += async (_, _) => await SaveListenerSettingsAsync();
-        layout.Controls.Add(saveButton, 1, 5);
+        layout.Controls.Add(saveButton, 1, 6);
 
         var note = CreateNoteLabel("Each host uses a local self-signed certificate and requires TLS 1.3. Remote clients pin the certificate hash after the first successful connection.");
-        layout.Controls.Add(note, 0, 6);
+        layout.Controls.Add(note, 0, 7);
         layout.SetColumnSpan(note, 2);
 
         panel.Controls.Add(layout);
+        return panel;
+    }
+
+    private Control CreateIntervalEditor()
+    {
+        var panel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            BackColor = AppTheme.Surface
+        };
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 42));
+
+        _intervalBox.BackColor = AppTheme.SurfaceRaised;
+        _intervalBox.ForeColor = AppTheme.Text;
+        _intervalBox.BorderStyle = BorderStyle.FixedSingle;
+        _intervalBox.TextAlign = HorizontalAlignment.Right;
+        _intervalBox.PromptChar = ' ';
+        _intervalBox.HidePromptOnLeave = true;
+        _intervalBox.CutCopyMaskFormat = MaskFormat.ExcludePromptAndLiterals;
+        _intervalBox.TextMaskFormat = MaskFormat.ExcludePromptAndLiterals;
+        _intervalBox.Width = 54;
+        _intervalBox.Dock = DockStyle.Left;
+        _intervalBox.Margin = new Padding(0, 7, 0, 7);
+
+        var unitLabel = new Label
+        {
+            Text = "ms",
+            Dock = DockStyle.Fill,
+            ForeColor = AppTheme.MutedText,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Margin = new Padding(8, 0, 0, 0)
+        };
+
+        panel.Controls.Add(_intervalBox, 0, 0);
+        panel.Controls.Add(unitLabel, 1, 0);
         return panel;
     }
 
@@ -603,12 +607,18 @@ internal sealed class MainForm : Form
 
         FormClosing += OnFormClosing;
         _pollTimer.Tick += async (_, _) => await RefreshAllHostsAsync();
-        _intervalBox.ValueChanged += (_, _) =>
+        _intervalBox.Leave += (_, _) => ApplyUpdateIntervalFromBox();
+        _intervalBox.KeyDown += (_, args) =>
         {
-            _settings.UpdateIntervalMs = (int)_intervalBox.Value;
-            _pollTimer.Interval = _settings.UpdateIntervalMs;
-            SettingsStore.Save(_settings);
+            if (args.KeyCode != Keys.Enter)
+            {
+                return;
+            }
+
+            ApplyUpdateIntervalFromBox();
+            args.SuppressKeyPress = true;
         };
+        _intervalBox.Enter += (_, _) => _intervalBox.SelectAll();
         _killButton.Click += async (_, _) => await KillSelectedProcessAsync();
         _dashboardButton.Click += (_, _) => ShowDashboardPage();
         _settingsButton.Click += (_, _) => ShowSettingsPage();
@@ -618,8 +628,8 @@ internal sealed class MainForm : Form
 
     private void LoadSettingsIntoControls()
     {
-        _settings.UpdateIntervalMs = Math.Clamp(_settings.UpdateIntervalMs, 250, 60000);
-        _intervalBox.Value = _settings.UpdateIntervalMs;
+        _settings.UpdateIntervalMs = Math.Clamp(_settings.UpdateIntervalMs, 250, 9999);
+        _intervalBox.Text = _settings.UpdateIntervalMs.ToString("0000");
         _pollTimer.Interval = _settings.UpdateIntervalMs;
 
         _listenerEnabledBox.Checked = _settings.ListenerEnabled;
@@ -627,6 +637,30 @@ internal sealed class MainForm : Form
         _listenerUserBox.Text = _settings.Username;
         _listenerPasswordBox.Text = _settings.GetPassword();
         RefreshRemoteList();
+    }
+
+    private void ApplyUpdateIntervalFromBox()
+    {
+        var rawText = _intervalBox.Text.Trim();
+        if (!int.TryParse(rawText, out var interval))
+        {
+            interval = _settings.UpdateIntervalMs;
+        }
+
+        interval = Math.Clamp(interval, 250, 9999);
+        if (_settings.UpdateIntervalMs != interval)
+        {
+            _settings.UpdateIntervalMs = interval;
+            _pollTimer.Interval = interval;
+            SettingsStore.Save(_settings);
+            SetStatusText($"Live telemetry - {_settings.UpdateIntervalMs:N0} ms updates");
+        }
+
+        var formatted = interval.ToString("0000");
+        if (!string.Equals(_intervalBox.Text, formatted, StringComparison.Ordinal))
+        {
+            _intervalBox.Text = formatted;
+        }
     }
 
     private void ConfigureTrayIcon()

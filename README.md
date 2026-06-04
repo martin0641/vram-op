@@ -24,7 +24,7 @@ C:\git\vram-op\bin\Release\net8.0-windows\VramOp.exe
 4. On your dashboard computer, add each remote host with the same host/IP, port, username, and password.
 5. Allow the listener port through Windows Firewall if another computer cannot connect.
 
-The update interval accepts values from `250 ms` through `60000 ms`.
+The update interval accepts values from `250 ms` through `9999 ms`.
 
 ## Security
 
