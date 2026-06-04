@@ -7,6 +7,8 @@ namespace VramOp;
 internal sealed class MainForm : Form
 {
     private const string AppDisplayName = "VRAM Vue";
+    private const int WmEnterSizeMove = 0x0231;
+    private const int WmExitSizeMove = 0x0232;
 
     private readonly AppSettings _settings;
     private readonly SystemTelemetryCollector _collector = new();
@@ -15,7 +17,6 @@ internal sealed class MainForm : Form
     private readonly Dictionary<Guid, HostSnapshot> _hostSnapshots = [];
     private readonly Dictionary<Guid, HostCard> _hostCards = [];
     private readonly BindingSource _processBinding = new();
-    private readonly System.Windows.Forms.Timer _pollTimer = new();
     private readonly NotifyIcon _notifyIcon = new();
     private readonly Icon _appIcon;
 
@@ -54,13 +55,17 @@ internal sealed class MainForm : Form
     private Guid _localHostId = Guid.Empty;
     private Guid? _selectedHostId;
     private bool _exitRequested;
-    private bool _refreshInProgress;
+    private int _refreshInProgress;
     private bool _hasShownTrayTip;
     private bool _hostListDirty = true;
+    private bool _isMovingOrSizing;
     private Guid? _lastRenderedProcessHostId;
     private string _lastRenderedProcessSignature = string.Empty;
     private string _lastStatusText = string.Empty;
     private string _lastListenerStatusText = string.Empty;
+    private RefreshResults? _pendingRefreshResults;
+    private CancellationTokenSource? _pollLoopCts;
+    private Task? _pollLoopTask;
     private CancellationTokenSource? _refreshCts;
 
     public MainForm()
@@ -80,7 +85,7 @@ internal sealed class MainForm : Form
         {
             _refreshCts?.Cancel();
             _refreshCts?.Dispose();
-            _pollTimer.Dispose();
+            StopPolling();
             _notifyIcon.Dispose();
             _appIcon.Dispose();
             _collector.Dispose();
@@ -335,9 +340,9 @@ internal sealed class MainForm : Form
         _processGrid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(25, 31, 40);
 
         AddProcessColumn(nameof(GpuProcessInfo.ProcessName), "Process", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleLeft);
-        AddProcessColumn(nameof(GpuProcessInfo.ProcessId), "PID", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleRight);
-        AddProcessColumn(nameof(GpuProcessInfo.LocalVramBytes), "VRAM", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleRight);
-        AddProcessColumn(nameof(GpuProcessInfo.SharedBytes), "Shared", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleRight);
+        AddProcessColumn(nameof(GpuProcessInfo.ProcessId), "PID", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleCenter, isResizable: false, headerAlignment: DataGridViewContentAlignment.MiddleCenter);
+        AddProcessColumn(nameof(GpuProcessInfo.LocalVramBytes), "VRAM", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleCenter, isResizable: false, headerAlignment: DataGridViewContentAlignment.MiddleCenter);
+        AddProcessColumn(nameof(GpuProcessInfo.SharedBytes), "Shared", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleCenter, isResizable: false, headerAlignment: DataGridViewContentAlignment.MiddleCenter);
         AddProcessColumn(nameof(GpuProcessInfo.RestartBehavior), "Restart", DataGridViewAutoSizeColumnMode.AllCells, 0, DataGridViewContentAlignment.MiddleLeft);
         AddProcessColumn(nameof(GpuProcessInfo.WindowTitle), "Window", DataGridViewAutoSizeColumnMode.Fill, 65, DataGridViewContentAlignment.MiddleLeft);
         AddProcessColumn(nameof(GpuProcessInfo.Notes), "Notes", DataGridViewAutoSizeColumnMode.Fill, 35, DataGridViewContentAlignment.MiddleLeft);
@@ -363,7 +368,9 @@ internal sealed class MainForm : Form
         string header,
         DataGridViewAutoSizeColumnMode autoSizeMode,
         float fillWeight,
-        DataGridViewContentAlignment alignment)
+        DataGridViewContentAlignment alignment,
+        bool isResizable = true,
+        DataGridViewContentAlignment? headerAlignment = null)
     {
         var column = new DataGridViewTextBoxColumn
         {
@@ -373,9 +380,11 @@ internal sealed class MainForm : Form
             AutoSizeMode = autoSizeMode,
             FillWeight = fillWeight <= 0 ? 100 : fillWeight,
             MinimumWidth = autoSizeMode == DataGridViewAutoSizeColumnMode.Fill ? 80 : 48,
+            Resizable = isResizable ? DataGridViewTriState.True : DataGridViewTriState.False,
             SortMode = DataGridViewColumnSortMode.Automatic
         };
         column.DefaultCellStyle.Alignment = alignment;
+        column.HeaderCell.Style.Alignment = headerAlignment ?? DataGridViewContentAlignment.MiddleLeft;
         _processGrid.Columns.Add(column);
     }
 
@@ -653,7 +662,7 @@ internal sealed class MainForm : Form
         {
             await RestartServerAsync();
             await RefreshAllHostsAsync();
-            _pollTimer.Start();
+            StartPolling();
         };
 
         Resize += (_, _) =>
@@ -665,7 +674,6 @@ internal sealed class MainForm : Form
         };
 
         FormClosing += OnFormClosing;
-        _pollTimer.Tick += async (_, _) => await RefreshAllHostsAsync();
         _intervalBox.Leave += (_, _) => ApplyUpdateIntervalFromBox();
         _intervalBox.KeyDown += (_, args) =>
         {
@@ -694,7 +702,6 @@ internal sealed class MainForm : Form
     {
         _settings.UpdateIntervalMs = Math.Clamp(_settings.UpdateIntervalMs, 250, 9999);
         _intervalBox.Text = _settings.UpdateIntervalMs.ToString("0000");
-        _pollTimer.Interval = _settings.UpdateIntervalMs;
 
         _listenerEnabledBox.Checked = _settings.ListenerEnabled;
         _confirmKillsBox.Checked = _settings.ConfirmTaskKills;
@@ -716,7 +723,7 @@ internal sealed class MainForm : Form
         if (_settings.UpdateIntervalMs != interval)
         {
             _settings.UpdateIntervalMs = interval;
-            _pollTimer.Interval = interval;
+            RestartPolling();
             SettingsStore.Save(_settings);
             SetStatusText($"Live telemetry - {_settings.UpdateIntervalMs:N0} ms updates");
         }
@@ -761,37 +768,193 @@ internal sealed class MainForm : Form
         }
     }
 
-    private async Task RefreshAllHostsAsync()
+    private void StartPolling()
     {
-        if (_refreshInProgress)
+        StopPolling();
+        _pollLoopCts = new CancellationTokenSource();
+        var token = _pollLoopCts.Token;
+        _pollLoopTask = Task.Run(() => PollLoopAsync(token), token);
+    }
+
+    private void RestartPolling()
+    {
+        if (_pollLoopCts is not null)
+        {
+            StartPolling();
+        }
+    }
+
+    private void StopPolling()
+    {
+        var cts = _pollLoopCts;
+        _pollLoopCts = null;
+        _pollLoopTask = null;
+
+        if (cts is null)
         {
             return;
         }
 
-        _refreshInProgress = true;
-        _refreshCts?.Cancel();
-        _refreshCts?.Dispose();
-        _refreshCts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        cts.Cancel();
+        cts.Dispose();
+    }
 
+    private async Task PollLoopAsync(CancellationToken cancellationToken)
+    {
         try
         {
-            RefreshLocalHost();
-            await RefreshRemoteHostsAsync(_refreshCts.Token);
-            UpdateHostCards();
-            RefreshSelectedHostView();
-            UpdateListenerStatus();
-            SetStatusText($"Live telemetry - {_settings.UpdateIntervalMs:N0} ms updates");
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(_settings.UpdateIntervalMs));
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await RefreshAllHostsAsync();
+            }
         }
-        finally
+        catch (OperationCanceledException)
         {
-            _refreshInProgress = false;
+            // Polling was intentionally stopped or restarted.
         }
     }
 
-    private void RefreshLocalHost()
+    private async Task RefreshAllHostsAsync()
     {
-        var telemetry = _collector.Read();
+        if (Interlocked.Exchange(ref _refreshInProgress, 1) == 1)
+        {
+            return;
+        }
 
+        _refreshCts?.Cancel();
+        _refreshCts?.Dispose();
+        _refreshCts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var refreshCts = _refreshCts;
+        var token = refreshCts.Token;
+
+        try
+        {
+            var remoteHosts = await RunOnUiThreadAsync(() => _settings.RemoteHosts.ToArray());
+            var localTelemetryTask = Task.Run(() => _collector.Read(), token);
+            var remoteResultsTask = Task.WhenAll(remoteHosts.Select(remote => RefreshRemoteHostAsync(remote, token)));
+
+            var localTelemetry = await localTelemetryTask;
+            var remoteResults = await remoteResultsTask;
+            await RunOnUiThreadAsync(() => ApplyRefreshResults(new RefreshResults(localTelemetry, remoteResults)));
+        }
+        catch (OperationCanceledException)
+        {
+            // A newer refresh or shutdown superseded this one.
+        }
+        finally
+        {
+            if (ReferenceEquals(_refreshCts, refreshCts))
+            {
+                _refreshCts?.Dispose();
+                _refreshCts = null;
+            }
+
+            Interlocked.Exchange(ref _refreshInProgress, 0);
+        }
+    }
+
+    private async Task<RemoteRefreshResult> RefreshRemoteHostAsync(RemoteHostConfig remote, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(remote.Host))
+        {
+            return RemoteRefreshResult.Failed(remote, "No host configured");
+        }
+
+        try
+        {
+            var result = await _remoteClient.ReadTelemetryAsync(remote, cancellationToken);
+            return result.Success && result.Telemetry is not null
+                ? RemoteRefreshResult.Succeeded(remote, result.Telemetry, result.CertificateThumbprint)
+                : RemoteRefreshResult.Failed(remote, result.ErrorMessage ?? "Unavailable");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or AuthenticationException)
+        {
+            return RemoteRefreshResult.Failed(remote, ex.Message);
+        }
+    }
+
+    private void ApplyRefreshResults(RefreshResults results)
+    {
+        if (_isMovingOrSizing)
+        {
+            _pendingRefreshResults = results;
+            return;
+        }
+
+        ApplyRefreshResultsCore(results);
+    }
+
+    private void ApplyRefreshResultsCore(RefreshResults results)
+    {
+        RefreshLocalHost(results.LocalTelemetry);
+
+        var shouldSaveSettings = false;
+        var shouldRefreshRemoteList = false;
+        var activeRemoteIds = _settings.RemoteHosts.Select(remote => remote.Id).ToHashSet();
+
+        foreach (var staleId in _hostSnapshots.Keys
+            .Where(id => id != _localHostId && !activeRemoteIds.Contains(id))
+            .ToArray())
+        {
+            _hostSnapshots.Remove(staleId);
+            _hostListDirty = true;
+        }
+
+        foreach (var result in results.RemoteResults)
+        {
+            var remote = _settings.RemoteHosts.FirstOrDefault(item => item.Id == result.Remote.Id);
+            if (remote is null)
+            {
+                continue;
+            }
+
+            if (result.Success && result.Telemetry is not null)
+            {
+                if (string.IsNullOrWhiteSpace(remote.TrustedCertificateThumbprint)
+                    && !string.IsNullOrWhiteSpace(result.CertificateThumbprint))
+                {
+                    remote.TrustedCertificateThumbprint = result.CertificateThumbprint;
+                    shouldSaveSettings = true;
+                    shouldRefreshRemoteList = true;
+                }
+
+                _hostSnapshots[remote.Id] = new HostSnapshot
+                {
+                    Id = remote.Id,
+                    DisplayName = remote.DisplayName,
+                    IsLocal = false,
+                    Endpoint = remote.BaseUrl,
+                    Telemetry = result.Telemetry,
+                    Status = "Online",
+                    LastSeen = result.Telemetry.CapturedAt,
+                    TrustedCertificateThumbprint = remote.TrustedCertificateThumbprint
+                };
+            }
+            else
+            {
+                MarkRemoteOffline(remote, result.Status);
+            }
+        }
+
+        if (shouldSaveSettings)
+        {
+            SettingsStore.Save(_settings);
+        }
+
+        if (shouldRefreshRemoteList)
+        {
+            RefreshRemoteList();
+        }
+
+        UpdateHostCards();
+        RefreshSelectedHostView();
+        UpdateListenerStatus();
+        SetStatusText($"Live telemetry - {_settings.UpdateIntervalMs:N0} ms updates");
+    }
+
+    private void RefreshLocalHost(HostTelemetry telemetry)
+    {
         if (_localHostId == Guid.Empty)
         {
             _localHostId = Guid.NewGuid();
@@ -809,52 +972,6 @@ internal sealed class MainForm : Form
             LastSeen = telemetry.CapturedAt,
             TrustedCertificateThumbprint = _server.CertificateThumbprint
         };
-    }
-
-    private async Task RefreshRemoteHostsAsync(CancellationToken cancellationToken)
-    {
-        foreach (var remote in _settings.RemoteHosts.ToArray())
-        {
-            if (string.IsNullOrWhiteSpace(remote.Host))
-            {
-                continue;
-            }
-
-            try
-            {
-                var result = await _remoteClient.ReadTelemetryAsync(remote, cancellationToken);
-                if (result.Success && result.Telemetry is not null)
-                {
-                    if (string.IsNullOrWhiteSpace(remote.TrustedCertificateThumbprint)
-                        && !string.IsNullOrWhiteSpace(result.CertificateThumbprint))
-                    {
-                        remote.TrustedCertificateThumbprint = result.CertificateThumbprint;
-                        SettingsStore.Save(_settings);
-                        RefreshRemoteList();
-                    }
-
-                    _hostSnapshots[remote.Id] = new HostSnapshot
-                    {
-                        Id = remote.Id,
-                        DisplayName = remote.DisplayName,
-                        IsLocal = false,
-                        Endpoint = remote.BaseUrl,
-                        Telemetry = result.Telemetry,
-                        Status = "Online",
-                        LastSeen = result.Telemetry.CapturedAt,
-                        TrustedCertificateThumbprint = remote.TrustedCertificateThumbprint
-                    };
-                }
-                else
-                {
-                    MarkRemoteOffline(remote, result.ErrorMessage ?? "Unavailable");
-                }
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or AuthenticationException)
-            {
-                MarkRemoteOffline(remote, ex.Message);
-            }
-        }
     }
 
     private void MarkRemoteOffline(RemoteHostConfig remote, string status)
@@ -1429,6 +1546,82 @@ internal sealed class MainForm : Form
         _listenerStatusLabel.Text = text;
     }
 
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WmEnterSizeMove)
+        {
+            _isMovingOrSizing = true;
+        }
+
+        base.WndProc(ref m);
+
+        if (m.Msg == WmExitSizeMove)
+        {
+            _isMovingOrSizing = false;
+            if (_pendingRefreshResults is not null)
+            {
+                var pending = _pendingRefreshResults;
+                _pendingRefreshResults = null;
+                ApplyRefreshResultsCore(pending);
+            }
+        }
+    }
+
+    private Task RunOnUiThreadAsync(Action action) =>
+        RunOnUiThreadAsync(() =>
+        {
+            action();
+            return true;
+        });
+
+    private Task<T> RunOnUiThreadAsync<T>(Func<T> action)
+    {
+        if (IsDisposed || !IsHandleCreated)
+        {
+            return Task.FromCanceled<T>(new CancellationToken(canceled: true));
+        }
+
+        if (!InvokeRequired)
+        {
+            try
+            {
+                return Task.FromResult(action());
+            }
+            catch (Exception ex)
+            {
+                return Task.FromException<T>(ex);
+            }
+        }
+
+        var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            BeginInvoke(new MethodInvoker(() =>
+            {
+                if (IsDisposed)
+                {
+                    completion.TrySetCanceled();
+                    return;
+                }
+
+                try
+                {
+                    completion.TrySetResult(action());
+                }
+                catch (Exception ex)
+                {
+                    completion.TrySetException(ex);
+                }
+            }));
+        }
+        catch (InvalidOperationException)
+        {
+            completion.TrySetCanceled();
+        }
+
+        return completion.Task;
+    }
+
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
         if (_exitRequested)
@@ -1442,5 +1635,23 @@ internal sealed class MainForm : Form
             e.Cancel = true;
             HideToTray(showTip: true);
         }
+    }
+
+    private sealed record RefreshResults(
+        HostTelemetry LocalTelemetry,
+        IReadOnlyList<RemoteRefreshResult> RemoteResults);
+
+    private sealed record RemoteRefreshResult(
+        RemoteHostConfig Remote,
+        HostTelemetry? Telemetry,
+        string? CertificateThumbprint,
+        string Status,
+        bool Success)
+    {
+        public static RemoteRefreshResult Succeeded(RemoteHostConfig remote, HostTelemetry telemetry, string? certificateThumbprint) =>
+            new(remote, telemetry, certificateThumbprint, "Online", true);
+
+        public static RemoteRefreshResult Failed(RemoteHostConfig remote, string status) =>
+            new(remote, null, null, status, false);
     }
 }
