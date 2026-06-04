@@ -318,6 +318,17 @@ internal sealed class SystemTelemetryCollector : IDisposable
 
     private static List<GpuAdapterInfo> ReadGpuAdapters()
     {
+        var dxgiAdapters = ReadDxgiGpuAdapters();
+        if (dxgiAdapters.Count > 0)
+        {
+            return dxgiAdapters;
+        }
+
+        return ReadWmiGpuAdapters();
+    }
+
+    private static List<GpuAdapterInfo> ReadWmiGpuAdapters()
+    {
         var adapters = new List<GpuAdapterInfo>();
 
         try
@@ -351,6 +362,92 @@ internal sealed class SystemTelemetryCollector : IDisposable
         return adapters;
     }
 
+    private static List<GpuAdapterInfo> ReadDxgiGpuAdapters()
+    {
+        var adapters = new List<GpuAdapterInfo>();
+        IDXGIFactory1? factory = null;
+
+        try
+        {
+            var wmiAdapters = ReadWmiGpuAdapters();
+            var factoryId = typeof(IDXGIFactory1).GUID;
+            var hr = CreateDXGIFactory1(ref factoryId, out factory);
+            if (hr < 0 || factory is null)
+            {
+                return adapters;
+            }
+
+            for (uint index = 0; ; index++)
+            {
+                IDXGIAdapter1? adapter = null;
+                try
+                {
+                    hr = factory.EnumAdapters1(index, out adapter);
+                    if (hr == DXGI_ERROR_NOT_FOUND)
+                    {
+                        break;
+                    }
+
+                    if (hr < 0 || adapter is null)
+                    {
+                        continue;
+                    }
+
+                    hr = adapter.GetDesc1(out var description);
+                    if (hr < 0 || (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0)
+                    {
+                        continue;
+                    }
+
+                    var dedicatedBytes = UIntPtrToInt64(description.DedicatedVideoMemory);
+                    if (dedicatedBytes <= 0)
+                    {
+                        continue;
+                    }
+
+                    var name = description.Description.Trim();
+                    var driverVersion = MatchDriverVersion(name, wmiAdapters);
+                    adapters.Add(new GpuAdapterInfo(name, dedicatedBytes, driverVersion));
+                }
+                finally
+                {
+                    if (adapter is not null)
+                    {
+                        Marshal.ReleaseComObject(adapter);
+                    }
+                }
+            }
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or COMException or UnauthorizedAccessException)
+        {
+            // DXGI is the reliable source for large VRAM totals, but older or restricted systems can block it.
+        }
+        finally
+        {
+            if (factory is not null)
+            {
+                Marshal.ReleaseComObject(factory);
+            }
+        }
+
+        return adapters;
+    }
+
+    private static string MatchDriverVersion(string adapterName, IReadOnlyList<GpuAdapterInfo> wmiAdapters)
+    {
+        var match = wmiAdapters.FirstOrDefault(adapter =>
+            adapterName.Contains(adapter.Name, StringComparison.OrdinalIgnoreCase)
+            || adapter.Name.Contains(adapterName, StringComparison.OrdinalIgnoreCase));
+
+        return match?.DriverVersion ?? string.Empty;
+    }
+
+    private static long UIntPtrToInt64(UIntPtr value)
+    {
+        var bytes = value.ToUInt64();
+        return bytes > long.MaxValue ? long.MaxValue : (long)bytes;
+    }
+
     private static MemoryStatus ReadMemoryStatus()
     {
         var status = new MemoryStatusEx();
@@ -372,6 +469,14 @@ internal sealed class SystemTelemetryCollector : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GlobalMemoryStatusEx(ref MemoryStatusEx lpBuffer);
 
+    private const int DXGI_ERROR_NOT_FOUND = unchecked((int)0x887A0002);
+    private const uint DXGI_ADAPTER_FLAG_SOFTWARE = 2;
+
+    [DllImport("dxgi.dll", ExactSpelling = true)]
+    private static extern int CreateDXGIFactory1(
+        ref Guid riid,
+        [MarshalAs(UnmanagedType.Interface)] out IDXGIFactory1? factory);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct MemoryStatusEx
     {
@@ -387,6 +492,113 @@ internal sealed class SystemTelemetryCollector : IDisposable
     }
 
     private readonly record struct MemoryStatus(long TotalBytes, long UsedBytes);
+
+    [ComImport]
+    [Guid("29038F61-3839-4626-91FD-086879011A05")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IDXGIAdapter1
+    {
+        [PreserveSig]
+        int SetPrivateData(ref Guid name, uint dataSize, IntPtr data);
+
+        [PreserveSig]
+        int SetPrivateDataInterface(ref Guid name, IntPtr unknown);
+
+        [PreserveSig]
+        int GetPrivateData(ref Guid name, ref uint dataSize, IntPtr data);
+
+        [PreserveSig]
+        int GetParent(ref Guid riid, out IntPtr parent);
+
+        [PreserveSig]
+        int EnumOutputs(uint output, out IntPtr outputPointer);
+
+        [PreserveSig]
+        int GetDesc(out DxgiAdapterDescription description);
+
+        [PreserveSig]
+        int CheckInterfaceSupport(ref Guid interfaceName, out long umdVersion);
+
+        [PreserveSig]
+        int GetDesc1(out DxgiAdapterDescription1 description);
+    }
+
+    [ComImport]
+    [Guid("770AAE78-F26F-4DBA-A829-253C83D1B387")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IDXGIFactory1
+    {
+        [PreserveSig]
+        int SetPrivateData(ref Guid name, uint dataSize, IntPtr data);
+
+        [PreserveSig]
+        int SetPrivateDataInterface(ref Guid name, IntPtr unknown);
+
+        [PreserveSig]
+        int GetPrivateData(ref Guid name, ref uint dataSize, IntPtr data);
+
+        [PreserveSig]
+        int GetParent(ref Guid riid, out IntPtr parent);
+
+        [PreserveSig]
+        int EnumAdapters(uint adapter, out IntPtr adapterPointer);
+
+        [PreserveSig]
+        int MakeWindowAssociation(IntPtr windowHandle, uint flags);
+
+        [PreserveSig]
+        int GetWindowAssociation(out IntPtr windowHandle);
+
+        [PreserveSig]
+        int CreateSwapChain(IntPtr device, IntPtr description, out IntPtr swapChain);
+
+        [PreserveSig]
+        int CreateSoftwareAdapter(IntPtr module, out IntPtr adapter);
+
+        [PreserveSig]
+        int EnumAdapters1(uint adapter, out IDXGIAdapter1? adapterPointer);
+
+        [PreserveSig]
+        int IsCurrent();
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct DxgiAdapterDescription
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+        public string Description;
+        public uint VendorId;
+        public uint DeviceId;
+        public uint SubSysId;
+        public uint Revision;
+        public UIntPtr DedicatedVideoMemory;
+        public UIntPtr DedicatedSystemMemory;
+        public UIntPtr SharedSystemMemory;
+        public Luid AdapterLuid;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct DxgiAdapterDescription1
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+        public string Description;
+        public uint VendorId;
+        public uint DeviceId;
+        public uint SubSysId;
+        public uint Revision;
+        public UIntPtr DedicatedVideoMemory;
+        public UIntPtr DedicatedSystemMemory;
+        public UIntPtr SharedSystemMemory;
+        public Luid AdapterLuid;
+        public uint Flags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Luid
+    {
+        public uint LowPart;
+        public int HighPart;
+    }
 
     private sealed class ProcessRestartIndex
     {
