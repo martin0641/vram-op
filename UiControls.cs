@@ -302,18 +302,18 @@ internal sealed class MetricCard : Control
         var textBottom = Math.Max(inner.Top, barRect.Top - barGap);
         var textHeight = textBottom - inner.Top;
 
-        var titleHeight = TextRenderer.MeasureText(e.Graphics, Title, Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
-        var detailHeight = TextRenderer.MeasureText(e.Graphics, "Hg", Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
-        var titleGap = compact ? 2 : Math.Max(4, Font.Height / 4);
-        var detailGap = compact ? 1 : Math.Max(2, Font.Height / 5);
-        var minimumValueHeight = TextRenderer.MeasureText(e.Graphics, "Hg", Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
-
-        if (compact && textHeight < titleHeight + titleGap + minimumValueHeight)
+        if (compact)
         {
             DrawCompactLine(e.Graphics, inner, textHeight);
             DrawProgress(e.Graphics, barRect, Ratio, AccentColor);
             return;
         }
+
+        var titleHeight = TextRenderer.MeasureText(e.Graphics, Title, Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
+        var detailHeight = TextRenderer.MeasureText(e.Graphics, "Hg", Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
+        var titleGap = compact ? 2 : Math.Max(4, Font.Height / 4);
+        var detailGap = compact ? 1 : Math.Max(2, Font.Height / 5);
+        var minimumValueHeight = TextRenderer.MeasureText(e.Graphics, "Hg", Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
 
         var showDetail = !string.IsNullOrWhiteSpace(DetailText)
             && textBottom - inner.Top >= titleHeight + titleGap + minimumValueHeight + detailGap + detailHeight;
@@ -368,7 +368,7 @@ internal sealed class MetricCard : Control
 
     private void DrawCompactLine(Graphics graphics, Rectangle inner, int availableHeight)
     {
-        var textHeight = Math.Max(1, availableHeight);
+        var textHeight = Math.Max(1, Math.Min(availableHeight, Font.Height + 6));
         var gap = Math.Max(8, Math.Min(18, inner.Width / 16));
         var valueWidth = Math.Max(inner.Width / 3, Math.Min(inner.Width / 2, TextRenderer.MeasureText(graphics, ValueText, Font, Size.Empty, TextFormatFlags.NoPadding).Width + gap));
         var titleWidth = Math.Max(1, inner.Width - valueWidth - gap);
