@@ -11,21 +11,22 @@ internal sealed class MainForm : Form
     private readonly TelemetryServer _server;
     private readonly RemoteTelemetryClient _remoteClient = new();
     private readonly Dictionary<Guid, HostSnapshot> _hostSnapshots = [];
+    private readonly Dictionary<Guid, HostCard> _hostCards = [];
     private readonly BindingSource _processBinding = new();
     private readonly System.Windows.Forms.Timer _pollTimer = new();
     private readonly NotifyIcon _notifyIcon = new();
     private readonly Icon _appIcon;
 
-    private readonly Panel _dashboardPage = new();
-    private readonly Panel _settingsPage = new();
+    private readonly Panel _dashboardPage = new BufferedPanel();
+    private readonly Panel _settingsPage = new BufferedPanel();
     private readonly BufferedFlowLayoutPanel _hostCardsPanel = new();
-    private readonly DataGridView _processGrid = new();
+    private readonly DataGridView _processGrid = new BufferedDataGridView();
     private readonly MetricCard _cpuCard = new() { Title = "CPU", AccentColor = AppTheme.Accent };
     private readonly MetricCard _ramCard = new() { Title = "RAM", AccentColor = AppTheme.Good };
     private readonly MetricCard _gpuCard = new() { Title = "GPU", AccentColor = AppTheme.Warning };
     private readonly MetricCard _vramCard = new() { Title = "VRAM", AccentColor = AppTheme.Danger };
-    private readonly Label _statusLabel = new();
-    private readonly Label _listenerStatusLabel = new();
+    private readonly Label _statusLabel = new BufferedLabel();
+    private readonly Label _listenerStatusLabel = new BufferedLabel();
     private readonly NumericUpDown _intervalBox = new();
     private readonly RoundedButton _killButton = new() { Text = "Kill selected", Width = 148 };
     private readonly RoundedButton _dashboardButton = new() { Text = "Dashboard", Width = 138 };
@@ -47,6 +48,11 @@ internal sealed class MainForm : Form
     private bool _exitRequested;
     private bool _refreshInProgress;
     private bool _hasShownTrayTip;
+    private bool _hostListDirty = true;
+    private Guid? _lastRenderedProcessHostId;
+    private string _lastRenderedProcessSignature = string.Empty;
+    private string _lastStatusText = string.Empty;
+    private string _lastListenerStatusText = string.Empty;
     private CancellationTokenSource? _refreshCts;
 
     public MainForm()
@@ -90,7 +96,7 @@ internal sealed class MainForm : Form
 
         ConfigureTrayIcon();
 
-        var root = new TableLayoutPanel
+        var root = new BufferedTableLayoutPanel
         {
             Dock = DockStyle.Fill,
             BackColor = AppTheme.Background,
@@ -109,14 +115,14 @@ internal sealed class MainForm : Form
         _statusLabel.Dock = DockStyle.Fill;
         _statusLabel.ForeColor = AppTheme.MutedText;
         _statusLabel.TextAlign = ContentAlignment.MiddleLeft;
-        _statusLabel.Text = "Starting";
+        SetStatusText("Starting");
 
         Controls.Add(root);
     }
 
     private Control BuildHeader()
     {
-        var header = new TableLayoutPanel
+        var header = new BufferedTableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 3,
@@ -651,8 +657,8 @@ internal sealed class MainForm : Form
         }
         catch (Exception ex)
         {
-            _listenerStatusLabel.Text = $"Listener error: {ex.Message}";
-            _statusLabel.Text = $"Listener error: {ex.Message}";
+            SetListenerStatusText($"Listener error: {ex.Message}");
+            SetStatusText($"Listener error: {ex.Message}");
         }
     }
 
@@ -672,10 +678,10 @@ internal sealed class MainForm : Form
         {
             RefreshLocalHost();
             await RefreshRemoteHostsAsync(_refreshCts.Token);
-            RebuildHostCards();
+            UpdateHostCards();
             RefreshSelectedHostView();
             UpdateListenerStatus();
-            _statusLabel.Text = $"Last update {DateTimeOffset.Now:HH:mm:ss}";
+            SetStatusText($"Live telemetry - {_settings.UpdateIntervalMs:N0} ms updates");
         }
         finally
         {
@@ -754,6 +760,10 @@ internal sealed class MainForm : Form
 
     private void MarkRemoteOffline(RemoteHostConfig remote, string status)
     {
+        var existing = _hostSnapshots.TryGetValue(remote.Id, out var previous)
+            ? previous.Status
+            : string.Empty;
+
         _hostSnapshots[remote.Id] = new HostSnapshot
         {
             Id = remote.Id,
@@ -764,35 +774,77 @@ internal sealed class MainForm : Form
             LastSeen = DateTimeOffset.Now,
             TrustedCertificateThumbprint = remote.TrustedCertificateThumbprint
         };
+
+        if (!string.Equals(existing, status, StringComparison.Ordinal))
+        {
+            _hostListDirty = true;
+        }
     }
 
-    private void RebuildHostCards()
+    private void UpdateHostCards()
     {
-        _hostCardsPanel.SuspendLayout();
-        _hostCardsPanel.Controls.Clear();
+        var orderedSnapshots = _hostSnapshots.Values
+            .OrderByDescending(host => host.IsLocal)
+            .ThenBy(host => host.DisplayName)
+            .ToArray();
+        var desiredIds = orderedSnapshots.Select(snapshot => snapshot.Id).ToHashSet();
+        var removedIds = _hostCards.Keys.Where(id => !desiredIds.Contains(id)).ToArray();
+        var orderChanged = _hostCardsPanel.Controls.Count != orderedSnapshots.Length;
 
-        foreach (var snapshot in _hostSnapshots.Values.OrderByDescending(host => host.IsLocal).ThenBy(host => host.DisplayName))
+        for (var index = 0; index < orderedSnapshots.Length && !orderChanged; index++)
         {
-            var card = new HostCard
-            {
-                Snapshot = snapshot,
-                IsSelected = snapshot.Id == _selectedHostId,
-                Height = Math.Max(208, Font.Height * 12),
-                Width = Math.Max(300, _hostCardsPanel.ClientSize.Width - 32)
-            };
-            card.Click += (_, _) =>
-            {
-                _selectedHostId = snapshot.Id;
-                RebuildHostCards();
-                RefreshSelectedHostView();
-            };
-            _hostCardsPanel.Controls.Add(card);
+            orderChanged = _hostCardsPanel.Controls[index] is not HostCard card
+                || card.Snapshot?.Id != orderedSnapshots[index].Id;
         }
 
+        _hostCardsPanel.SuspendLayout();
+
+        foreach (var id in removedIds)
+        {
+            if (_hostCards.Remove(id, out var card))
+            {
+                _hostCardsPanel.Controls.Remove(card);
+                card.Dispose();
+            }
+        }
+
+        if (orderChanged || _hostListDirty)
+        {
+            _hostCardsPanel.Controls.Clear();
+        }
+
+        foreach (var snapshot in orderedSnapshots)
+        {
+            if (!_hostCards.TryGetValue(snapshot.Id, out var card) || card.IsDisposed)
+            {
+                card = new HostCard();
+                var hostId = snapshot.Id;
+                card.Click += (_, _) =>
+                {
+                    _selectedHostId = hostId;
+                    UpdateHostCards();
+                    RefreshSelectedHostView(forceProcessRefresh: true);
+                };
+                _hostCards[snapshot.Id] = card;
+            }
+
+            card.Snapshot = snapshot;
+            card.IsSelected = snapshot.Id == _selectedHostId;
+            card.Height = Math.Max(208, Font.Height * 12);
+            card.Width = Math.Max(300, _hostCardsPanel.ClientSize.Width - 32);
+            card.Invalidate();
+
+            if (orderChanged || _hostListDirty)
+            {
+                _hostCardsPanel.Controls.Add(card);
+            }
+        }
+
+        _hostListDirty = false;
         _hostCardsPanel.ResumeLayout();
     }
 
-    private void RefreshSelectedHostView()
+    private void RefreshSelectedHostView(bool forceProcessRefresh = false)
     {
         if (_selectedHostId is null || !_hostSnapshots.TryGetValue(_selectedHostId.Value, out var selected))
         {
@@ -803,14 +855,51 @@ internal sealed class MainForm : Form
         if (selected is null)
         {
             UpdateMetricCards(null);
-            _processBinding.DataSource = Array.Empty<GpuProcessInfo>();
+            UpdateProcessRows(Array.Empty<GpuProcessInfo>(), forceProcessRefresh: true);
             UpdateKillButton();
             return;
         }
 
         UpdateMetricCards(selected);
-        _processBinding.DataSource = selected.TopGpuProcesses.ToList();
+        UpdateProcessRows(selected.TopGpuProcesses, forceProcessRefresh || _lastRenderedProcessHostId != selected.Id);
+        _lastRenderedProcessHostId = selected.Id;
         UpdateKillButton();
+    }
+
+    private void UpdateProcessRows(IReadOnlyList<GpuProcessInfo> rows, bool forceProcessRefresh)
+    {
+        var signature = string.Join("|", rows.Select(row =>
+            $"{row.ProcessId}:{row.ProcessName}:{row.LocalVramBytes}:{row.SharedBytes}:{row.WindowTitle}:{row.Notes}:{row.CanKill}"));
+
+        if (!forceProcessRefresh && string.Equals(signature, _lastRenderedProcessSignature, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var selectedPid = _processGrid.SelectedRows
+            .Cast<DataGridViewRow>()
+            .Select(row => row.DataBoundItem)
+            .OfType<GpuProcessInfo>()
+            .Select(row => row.ProcessId)
+            .FirstOrDefault();
+
+        _processGrid.SuspendLayout();
+        _processBinding.DataSource = rows.ToList();
+        _lastRenderedProcessSignature = signature;
+
+        if (selectedPid != 0)
+        {
+            foreach (DataGridViewRow gridRow in _processGrid.Rows)
+            {
+                if (gridRow.DataBoundItem is GpuProcessInfo process && process.ProcessId == selectedPid)
+                {
+                    gridRow.Selected = true;
+                    break;
+                }
+            }
+        }
+
+        _processGrid.ResumeLayout();
     }
 
     private void UpdateMetricCards(HostSnapshot? host)
@@ -832,6 +921,14 @@ internal sealed class MainForm : Form
 
     private static void SetMetric(MetricCard card, string title, string value, string detail, double ratio)
     {
+        if (card.Title == title
+            && card.ValueText == value
+            && card.DetailText == detail
+            && Math.Abs(card.Ratio - ratio) < 0.005)
+        {
+            return;
+        }
+
         card.Title = title;
         card.ValueText = value;
         card.DetailText = detail;
@@ -940,8 +1037,9 @@ internal sealed class MainForm : Form
         _hostSnapshots.Remove(remote.Id);
         SettingsStore.Save(_settings);
         RefreshRemoteList();
-        RebuildHostCards();
-        RefreshSelectedHostView();
+        _hostListDirty = true;
+        UpdateHostCards();
+        RefreshSelectedHostView(forceProcessRefresh: true);
     }
 
     private void RefreshRemoteList()
@@ -993,7 +1091,7 @@ internal sealed class MainForm : Form
         var thumbprint = string.IsNullOrWhiteSpace(_server.CertificateThumbprint)
             ? string.Empty
             : $" | Cert {ShortThumbprint(_server.CertificateThumbprint)}";
-        _listenerStatusLabel.Text = $"{_server.Status}{thumbprint}";
+        SetListenerStatusText($"{_server.Status}{thumbprint}");
         SetTrayText(_hostSnapshots.TryGetValue(_localHostId, out var local)
             ? $"VRAM Op - VRAM {Formatters.Bytes(local.VramUsedBytes)}"
             : "VRAM Op");
@@ -1047,6 +1145,28 @@ internal sealed class MainForm : Form
     private void SetTrayText(string text)
     {
         _notifyIcon.Text = text.Length <= 63 ? text : text[..63];
+    }
+
+    private void SetStatusText(string text)
+    {
+        if (string.Equals(_lastStatusText, text, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastStatusText = text;
+        _statusLabel.Text = text;
+    }
+
+    private void SetListenerStatusText(string text)
+    {
+        if (string.Equals(_lastListenerStatusText, text, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastListenerStatusText = text;
+        _listenerStatusLabel.Text = text;
     }
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)

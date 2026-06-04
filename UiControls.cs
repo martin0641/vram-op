@@ -22,7 +22,47 @@ internal sealed class BufferedFlowLayoutPanel : FlowLayoutPanel
     public BufferedFlowLayoutPanel()
     {
         DoubleBuffered = true;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
         ResizeRedraw = true;
+    }
+}
+
+internal sealed class BufferedPanel : Panel
+{
+    public BufferedPanel()
+    {
+        DoubleBuffered = true;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        ResizeRedraw = true;
+    }
+}
+
+internal sealed class BufferedTableLayoutPanel : TableLayoutPanel
+{
+    public BufferedTableLayoutPanel()
+    {
+        DoubleBuffered = true;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        ResizeRedraw = true;
+    }
+}
+
+internal sealed class BufferedLabel : Label
+{
+    public BufferedLabel()
+    {
+        DoubleBuffered = true;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        ResizeRedraw = true;
+    }
+}
+
+internal sealed class BufferedDataGridView : DataGridView
+{
+    public BufferedDataGridView()
+    {
+        DoubleBuffered = true;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
     }
 }
 
