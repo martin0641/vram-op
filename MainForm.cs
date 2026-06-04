@@ -418,6 +418,8 @@ internal sealed class MainForm : Form
         _listenerPasswordBox.BackColor = AppTheme.SurfaceRaised;
         _listenerPasswordBox.ForeColor = AppTheme.Text;
         _listenerPasswordBox.UseSystemPasswordChar = true;
+        ConfigureTextInput(_listenerUserBox, 64, InputRules.IsBasicAuthUsernameChar, InputRules.NormalizeBasicAuthUsername);
+        ConfigureTextInput(_listenerPasswordBox, 128, InputRules.IsPasswordChar, InputRules.NormalizePassword);
 
         var saveButton = new RoundedButton { Text = "Save and restart listener", Width = 190 };
         saveButton.Click += async (_, _) => await SaveListenerSettingsAsync();
@@ -507,6 +509,11 @@ internal sealed class MainForm : Form
             textBox.ForeColor = AppTheme.Text;
             textBox.BorderStyle = BorderStyle.FixedSingle;
         }
+        ConfigureTextInput(_remoteNameBox, 64, InputRules.IsDisplayNameChar, InputRules.NormalizeDisplayName);
+        ConfigureTextInput(_remoteHostBox, 253, InputRules.IsHostChar, InputRules.NormalizeHost);
+        ConfigureTextInput(_remoteUserBox, 64, InputRules.IsBasicAuthUsernameChar, InputRules.NormalizeBasicAuthUsername);
+        ConfigureTextInput(_remotePasswordBox, 128, InputRules.IsPasswordChar, InputRules.NormalizePassword);
+        ConfigureTextInput(_remoteThumbprintBox, 95, InputRules.IsCertificateThumbprintChar, InputRules.NormalizeThumbprint);
 
         var buttons = new FlowLayoutPanel
         {
@@ -586,6 +593,30 @@ internal sealed class MainForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
         layout.Controls.Add(labelControl, 0, row);
         layout.Controls.Add(control, 1, row);
+    }
+
+    private static void ConfigureTextInput(TextBox textBox, int maxLength, Func<char, bool> isAllowed, Func<string, string> normalize)
+    {
+        textBox.MaxLength = maxLength;
+        textBox.KeyPress += (_, args) =>
+        {
+            if (!char.IsControl(args.KeyChar) && !isAllowed(args.KeyChar))
+            {
+                args.Handled = true;
+            }
+        };
+        textBox.Leave += (_, _) =>
+        {
+            var cursor = textBox.SelectionStart;
+            var normalized = normalize(textBox.Text);
+            if (string.Equals(textBox.Text, normalized, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            textBox.Text = normalized;
+            textBox.SelectionStart = Math.Min(cursor, textBox.TextLength);
+        };
     }
 
     private void WireEvents()
@@ -1026,30 +1057,60 @@ internal sealed class MainForm : Form
 
     private async Task SaveListenerSettingsAsync()
     {
+        ApplyUpdateIntervalFromBox();
+        var username = InputRules.NormalizeBasicAuthUsername(_listenerUserBox.Text);
+        var password = InputRules.NormalizePassword(_listenerPasswordBox.Text);
+
+        if (_listenerEnabledBox.Checked && (string.IsNullOrWhiteSpace(username) || string.IsNullOrEmpty(password)))
+        {
+            MessageBox.Show(this, "Set a listener username and password before enabling telemetry.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
         _settings.ListenerEnabled = _listenerEnabledBox.Checked;
         _settings.ListenerPort = (int)_listenerPortBox.Value;
-        _settings.Username = _listenerUserBox.Text.Trim();
-        _settings.SetPassword(_listenerPasswordBox.Text);
+        _settings.Username = username;
+        _settings.SetPassword(password);
+        _listenerUserBox.Text = username;
+        _listenerPasswordBox.Text = password;
         SettingsStore.Save(_settings);
         await RestartServerAsync();
     }
 
     private void SaveRemoteHost()
     {
-        if (string.IsNullOrWhiteSpace(_remoteHostBox.Text))
+        var name = InputRules.NormalizeDisplayName(_remoteNameBox.Text);
+        var host = InputRules.NormalizeHost(_remoteHostBox.Text);
+        var username = InputRules.NormalizeBasicAuthUsername(_remoteUserBox.Text);
+        var password = InputRules.NormalizePassword(_remotePasswordBox.Text);
+        var thumbprint = InputRules.NormalizeThumbprint(_remoteThumbprintBox.Text);
+
+        if (!InputRules.IsValidHost(host))
         {
-            MessageBox.Show(this, "Enter a host name or IP address.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, "Enter a valid host name or IP address.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrEmpty(password))
+        {
+            MessageBox.Show(this, "Enter the remote username and password.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (!InputRules.IsValidThumbprint(thumbprint))
+        {
+            MessageBox.Show(this, "The pinned certificate must be a 64-character SHA-256 hex thumbprint, or blank.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
         var selected = _remoteListBox.SelectedItem as RemoteHostConfig;
         var remote = selected ?? new RemoteHostConfig();
-        remote.Name = _remoteNameBox.Text.Trim();
-        remote.Host = _remoteHostBox.Text.Trim();
+        remote.Name = name;
+        remote.Host = host;
         remote.Port = (int)_remotePortBox.Value;
-        remote.Username = _remoteUserBox.Text.Trim();
-        remote.SetPassword(_remotePasswordBox.Text);
-        remote.TrustedCertificateThumbprint = _remoteThumbprintBox.Text.Trim();
+        remote.Username = username;
+        remote.SetPassword(password);
+        remote.TrustedCertificateThumbprint = thumbprint;
 
         if (selected is null)
         {
@@ -1057,6 +1118,11 @@ internal sealed class MainForm : Form
         }
 
         SettingsStore.Save(_settings);
+        _remoteNameBox.Text = name;
+        _remoteHostBox.Text = host;
+        _remoteUserBox.Text = username;
+        _remotePasswordBox.Text = password;
+        _remoteThumbprintBox.Text = thumbprint;
         RefreshRemoteList();
     }
 

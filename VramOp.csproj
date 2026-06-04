@@ -7,6 +7,11 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationIcon>Assets\VramOp.ico</ApplicationIcon>
+    <Authors>Martin (martin0641)</Authors>
+    <Description>Windows VRAM and GPU memory dashboard for monitoring and freeing memory across PCs.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/martin0641/vram-op</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/martin0641/vram-op</RepositoryUrl>
   </PropertyGroup>
 
   <ItemGroup>

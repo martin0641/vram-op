@@ -4,6 +4,8 @@ VRAM Op is a Windows WinForms dashboard for watching CPU, RAM, GPU, and VRAM pre
 
 The UI is dark, DPI-aware, and uses the tray/taskbar icon generated at startup.
 
+Author/contact: Martin / `martin0641@gmail.com`
+
 ## Build
 
 ```powershell
@@ -42,3 +44,7 @@ The update interval accepts values from `250 ms` through `9999 ms`.
 - Some elevated or protected Windows processes are shown but not killable from the app.
 - The dashboard shows the top 10 GPU-memory processes for the selected host and can send a kill request to that host.
 - Closing or minimizing the window hides it to the tray. Use the tray icon menu to show or exit.
+
+## License
+
+MIT. See `LICENSE`.
