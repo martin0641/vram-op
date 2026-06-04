@@ -273,7 +273,7 @@ internal sealed class MetricCard : Control
     {
         DoubleBuffered = true;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-        MinimumSize = new Size(180, 132);
+        MinimumSize = new Size(160, 104);
         Margin = new Padding(0, 0, 10, 10);
         Font = new Font("Segoe UI", 9F);
     }
@@ -293,25 +293,31 @@ internal sealed class MetricCard : Control
         e.Graphics.FillPath(fill, path);
         e.Graphics.DrawPath(border, path);
 
-        var pad = Math.Max(12, Font.Height);
+        var compact = Height < 128 || Width < 220;
+        var pad = compact ? Math.Max(8, Font.Height / 2) : Math.Max(12, Font.Height);
         var inner = Rectangle.Inflate(rect, -pad, -pad);
         var titleHeight = TextRenderer.MeasureText(e.Graphics, Title, Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
         var detailHeight = TextRenderer.MeasureText(e.Graphics, "Hg", Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
-        var barHeight = Math.Max(8, Font.Height / 2);
-        var barGap = Math.Max(10, Font.Height / 2);
+        var barHeight = Math.Max(6, compact ? Font.Height / 3 : Font.Height / 2);
+        var titleGap = compact ? 2 : Math.Max(4, Font.Height / 4);
+        var detailGap = compact ? 1 : Math.Max(2, Font.Height / 5);
+        var barGap = compact ? 5 : Math.Max(10, Font.Height / 2);
 
-        using var valueFont = new Font("Segoe UI", Font.Size + 5F, FontStyle.Bold);
+        var valueFontSize = compact ? Font.Size + 2F : Font.Size + 5F;
+        var availableValueHeight = Math.Max(Font.Height + 2, inner.Height - titleHeight - detailHeight - barHeight - titleGap - detailGap - barGap);
+        using var valueFont = new Font("Segoe UI", valueFontSize, FontStyle.Bold);
         var valueHeight = TextRenderer.MeasureText(e.Graphics, ValueText, valueFont, Size.Empty, TextFormatFlags.NoPadding).Height + 4;
+        var effectiveValueHeight = Math.Min(valueHeight, availableValueHeight);
 
         var y = inner.Top;
         var titleRect = new Rectangle(inner.Left, y, inner.Width, titleHeight);
         TextRenderer.DrawText(e.Graphics, Title, Font, titleRect, AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
 
-        y += titleHeight + Math.Max(4, Font.Height / 4);
-        var valueRect = new Rectangle(inner.Left, y, inner.Width, valueHeight);
+        y += titleHeight + titleGap;
+        var valueRect = new Rectangle(inner.Left, y, inner.Width, effectiveValueHeight);
         TextRenderer.DrawText(e.Graphics, ValueText, valueFont, valueRect, AppTheme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
 
-        y += valueHeight + Math.Max(2, Font.Height / 5);
+        y += effectiveValueHeight + detailGap;
         var detailRect = new Rectangle(inner.Left, y, inner.Width, detailHeight);
         TextRenderer.DrawText(e.Graphics, DetailText, Font, detailRect, AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 

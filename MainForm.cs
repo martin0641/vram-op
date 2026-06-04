@@ -137,14 +137,16 @@ internal sealed class MainForm : Form
 
         Controls.Add(_rootLayout);
         ApplyResponsiveLayout();
+        EnsureStartupCanShowTenProcessRows();
+        ApplyResponsiveLayout();
     }
 
     private void ApplyInitialWindowBounds()
     {
         const int preferredWidth = 1500;
-        const int preferredHeight = 960;
+        const int preferredHeight = 1080;
         const int comfortableMinimumWidth = 1240;
-        const int comfortableMinimumHeight = 820;
+        const int comfortableMinimumHeight = 900;
 
         var workingArea = GetStartupWorkingArea();
         var availableWidth = Math.Max(760, workingArea.Width - 16);
@@ -445,9 +447,9 @@ internal sealed class MainForm : Form
 
     private int CalculateMetricsRowHeight(int headerHeight, int statusHeight, int actionsHeight)
     {
-        var desired = ClientSize.Height < 820 ? 132 : 156;
-        var minimum = Math.Max(112, _cpuCard.MinimumSize.Height);
-        var processRowsHeight = _processGrid.ColumnHeadersHeight + (_processGrid.RowTemplate.Height * 10) + 32;
+        var desired = ClientSize.Height < 820 ? 112 : 148;
+        var minimum = Math.Max(96, _cpuCard.MinimumSize.Height);
+        var processRowsHeight = RequiredProcessGridHeight();
         var availableDashboardHeight = ClientSize.Height - _rootLayout.Padding.Vertical - headerHeight - statusHeight;
         var maxMetricsHeight = availableDashboardHeight - actionsHeight - processRowsHeight;
 
@@ -458,6 +460,45 @@ internal sealed class MainForm : Form
 
         return minimum;
     }
+
+    private void EnsureStartupCanShowTenProcessRows()
+    {
+        var workingArea = Screen.FromControl(this).WorkingArea;
+        var headerHeight = (int)Math.Ceiling(_rootLayout.RowStyles[0].Height);
+        var statusHeight = (int)Math.Ceiling(_rootLayout.RowStyles[2].Height);
+        var actionsHeight = CalculateActionRowHeight();
+        var metricsHeight = Math.Max(108, _cpuCard.MinimumSize.Height);
+        var requiredClientHeight = _rootLayout.Padding.Vertical
+            + headerHeight
+            + metricsHeight
+            + RequiredProcessGridHeight()
+            + actionsHeight
+            + statusHeight;
+        var requiredClientWidth = Math.Max(1240, ClientSize.Width);
+        var requiredWindowSize = SizeFromClientSize(new Size(requiredClientWidth, requiredClientHeight));
+        var maxWidth = Math.Max(MinimumSize.Width, workingArea.Width - 16);
+        var maxHeight = Math.Max(MinimumSize.Height, workingArea.Height - 16);
+        var targetWidth = Math.Min(Math.Max(Width, requiredWindowSize.Width), maxWidth);
+        var targetHeight = Math.Min(Math.Max(Height, requiredWindowSize.Height), maxHeight);
+
+        MinimumSize = new Size(
+            Math.Min(Math.Max(MinimumSize.Width, requiredWindowSize.Width), maxWidth),
+            Math.Min(Math.Max(MinimumSize.Height, requiredWindowSize.Height), maxHeight));
+
+        if (targetWidth == Width && targetHeight == Height)
+        {
+            return;
+        }
+
+        Bounds = new Rectangle(
+            workingArea.Left + Math.Max(0, (workingArea.Width - targetWidth) / 2),
+            workingArea.Top + Math.Max(0, (workingArea.Height - targetHeight) / 2),
+            targetWidth,
+            targetHeight);
+    }
+
+    private int RequiredProcessGridHeight() =>
+        _processGrid.ColumnHeadersHeight + (_processGrid.RowTemplate.Height * 10) + 40;
 
     private int CalculateActionRowHeight()
     {
