@@ -293,6 +293,8 @@ internal sealed class MainForm : Form
         _hostCardsPanel.WrapContents = false;
         _hostCardsPanel.AutoScroll = true;
         _hostCardsPanel.BackColor = AppTheme.Surface;
+        _hostCardsPanel.HorizontalScroll.Enabled = false;
+        _hostCardsPanel.HorizontalScroll.Visible = false;
         hostPanel.Controls.Add(_hostCardsPanel);
 
         var processPanel = new RoundedPanel
@@ -468,7 +470,7 @@ internal sealed class MainForm : Form
         }
 
         var compact = _dashboardSplit.Width < 920;
-        var hostMin = compact ? 190 : 280;
+        var hostMin = compact ? 230 : 310;
         var processMin = compact ? 340 : 520;
         _dashboardSplit.Panel1MinSize = Math.Min(hostMin, Math.Max(80, _dashboardSplit.Width - 120));
         _dashboardSplit.Panel2MinSize = Math.Min(processMin, Math.Max(160, _dashboardSplit.Width - _dashboardSplit.Panel1MinSize - _dashboardSplit.SplitterWidth));
@@ -480,8 +482,8 @@ internal sealed class MainForm : Form
         }
 
         var desired = compact
-            ? Math.Min(260, Math.Max(_dashboardSplit.Panel1MinSize, _dashboardSplit.Width / 3))
-            : Math.Min(430, _dashboardSplit.Width - _dashboardSplit.Panel2MinSize);
+            ? Math.Min(320, Math.Max(_dashboardSplit.Panel1MinSize, (int)Math.Round(_dashboardSplit.Width * 0.36)))
+            : Math.Min(460, _dashboardSplit.Width - _dashboardSplit.Panel2MinSize);
         _dashboardSplit.SplitterDistance = Math.Clamp(desired, _dashboardSplit.Panel1MinSize, maxDistance);
     }
 
@@ -1188,6 +1190,8 @@ internal sealed class MainForm : Form
         }
 
         _hostCardsPanel.SuspendLayout();
+        _hostCardsPanel.HorizontalScroll.Enabled = false;
+        _hostCardsPanel.HorizontalScroll.Visible = false;
 
         foreach (var id in removedIds)
         {
@@ -1220,14 +1224,15 @@ internal sealed class MainForm : Form
 
             card.Snapshot = snapshot;
             card.IsSelected = snapshot.Id == _selectedHostId;
-            card.Width = Math.Max(170, _hostCardsPanel.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 8);
-            var preferredHeight = Math.Max(178, card.Font.Height * 7 + 68);
-            if (orderedSnapshots.Length == 1 && _hostCardsPanel.ClientSize.Height > 180)
+            var scrollReserve = orderedSnapshots.Length > 1 ? SystemInformation.VerticalScrollBarWidth : 0;
+            card.Width = Math.Max(190, _hostCardsPanel.ClientSize.Width - scrollReserve - 18);
+            var preferredHeight = Math.Max(194, card.Font.Height * 7 + 86);
+            if (orderedSnapshots.Length == 1 && _hostCardsPanel.ClientSize.Height > 206)
             {
-                preferredHeight = Math.Min(preferredHeight, _hostCardsPanel.ClientSize.Height - 8);
+                preferredHeight = Math.Min(preferredHeight, _hostCardsPanel.ClientSize.Height - 18);
             }
 
-            card.Height = Math.Max(172, preferredHeight);
+            card.Height = Math.Max(190, preferredHeight);
             card.Invalidate();
 
             if (orderChanged || _hostListDirty)

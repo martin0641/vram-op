@@ -311,7 +311,7 @@ internal sealed class HostCard : Control
         Cursor = Cursors.Hand;
         Width = 330;
         Height = 208;
-        Margin = new Padding(0, 0, 12, 12);
+        Margin = new Padding(0, 0, 0, 12);
         Font = new Font("Segoe UI", 9F);
     }
 
