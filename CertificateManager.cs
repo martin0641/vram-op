@@ -62,13 +62,13 @@ internal static class CertificateManager
             DateTimeOffset.Now.AddYears(5));
         certificate.FriendlyName = CertificateName;
 
-        var exportableCertificate = new X509Certificate2(
+        var persistedCertificate = new X509Certificate2(
             certificate.Export(X509ContentType.Pfx),
             string.Empty,
-            X509KeyStorageFlags.PersistKeySet | X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.Exportable);
+            X509KeyStorageFlags.PersistKeySet | X509KeyStorageFlags.UserKeySet);
 
-        store.Add(exportableCertificate);
-        return exportableCertificate;
+        store.Add(persistedCertificate);
+        return persistedCertificate;
     }
 
     public static string GetSha256Thumbprint(X509Certificate2 certificate) =>

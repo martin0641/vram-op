@@ -1,0 +1,57 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="VRAM Vue"
+    Manufacturer="Martin (martin0641)"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="dd0cbc00-a5df-4dad-b649-283995002798"
+    Scope="perMachine">
+
+    <SummaryInformation
+      Description="VRAM Vue Windows GPU VRAM monitor and remote telemetry dashboard"
+      Manufacturer="Martin (martin0641)" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of VRAM Vue is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="VramVueIcon" SourceFile="$(var.RepoRoot)\Assets\VramOp.ico" />
+    <Property Id="ARPPRODUCTICON" Value="VramVueIcon" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="VRAM Vue">
+        <Component Id="VramVueExecutable" Guid="614c696e-580b-43f6-ab8e-104025bfc7cc" Bitness="always64">
+          <File
+            Id="VramVueExe"
+            Name="VramVue.exe"
+            Source="$(var.PublishDir)\VramVue.exe"
+            KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="VRAM Vue">
+        <Component Id="StartMenuShortcutComponent" Guid="2d30a8cb-47b2-4e34-aec9-ce6d67c96587" Bitness="always64">
+          <Shortcut
+            Id="StartMenuShortcut"
+            Name="VRAM Vue"
+            Description="Monitor Windows GPU, VRAM, RAM, and CPU usage across PCs"
+            Target="[INSTALLFOLDER]VramVue.exe"
+            WorkingDirectory="INSTALLFOLDER"
+            Icon="VramVueIcon" />
+          <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
+          <RegistryValue
+            Root="HKCU"
+            Key="Software\VRAM Vue"
+            Name="StartMenuShortcut"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="VRAM Vue" Level="1">
+      <ComponentRef Id="VramVueExecutable" />
+      <ComponentRef Id="StartMenuShortcutComponent" />
+    </Feature>
+  </Package>
+</Wix>
