@@ -33,7 +33,7 @@ jobs:
       - name: Install WiX CLI
         shell: pwsh
         run: |
-          dotnet tool install --global wix
+          dotnet tool install --global wix --version 6.0.2
           "$env:USERPROFILE\.dotnet\tools" >> $env:GITHUB_PATH
 
       - name: Restore with NuGet audit

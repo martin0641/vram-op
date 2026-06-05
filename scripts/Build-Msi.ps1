@@ -19,7 +19,7 @@ $wxsPath = Join-Path $repoRoot "installer\VRAMVue.wxs"
 
 $wix = Get-Command wix -ErrorAction SilentlyContinue
 if (-not $wix) {
-    throw "WiX Toolset CLI was not found. Install it with: dotnet tool install --global wix"
+    throw "WiX Toolset CLI was not found. Install it with: dotnet tool install --global wix --version 6.0.2"
 }
 
 New-Item -ItemType Directory -Force -Path $publishDir, $wixIntermediateDir, $distDir | Out-Null

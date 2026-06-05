@@ -44,7 +44,7 @@ VRAMVue-Portable-v6.0.0-win-x64.zip  A931E731E1F6FACFBDCA1DB3A9D8EDCD6CFE561B2D0
 To rebuild both artifacts from source:
 
 ```powershell
-dotnet tool install --global wix
+dotnet tool install --global wix --version 6.0.2
 .\scripts\Build-Msi.ps1 -Version 6.0.0
 ```
 
