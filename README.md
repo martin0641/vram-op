@@ -16,7 +16,7 @@ Author/contact: Martin / `martin0641@gmail.com`
 - Self-contained win-x64 MSI installer, no separate .NET Desktop Runtime install required.
 - Tray icon behavior for long-running monitoring without Remote Desktop overhead.
 
-## Download or Build the MSI
+## Download or Build Distribution Artifacts
 
 The v6 installer built by this repo is:
 
@@ -24,20 +24,27 @@ The v6 installer built by this repo is:
 dist\VRAMVue-Setup-v6.0.0-win-x64.msi
 ```
 
-Current local v6 MSI SHA-256:
+For users who want to unzip and run `VramVue.exe` directly, use the portable self-contained build:
 
 ```text
-718CD1B3F0D743BF9EB38A1A9839EDD7E0C7F7B986EA53017AF8CE0583105B31
+dist\VRAMVue-Portable-v6.0.0-win-x64.zip
 ```
 
-To rebuild the installer from source:
+Current local v6 SHA-256 hashes:
+
+```text
+VRAMVue-Setup-v6.0.0-win-x64.msi     DCF9ABB82A9CE3EF5B9B7D9B95A4D8F9B912DC4CE9DAE953F870F44515507905
+VRAMVue-Portable-v6.0.0-win-x64.zip  A931E731E1F6FACFBDCA1DB3A9D8EDCD6CFE561B2D0B1FF5787D97AED74B663A
+```
+
+To rebuild both artifacts from source:
 
 ```powershell
 dotnet tool install --global wix
 .\scripts\Build-Msi.ps1 -Version 6.0.0
 ```
 
-The MSI installs `VramVue.exe` under Program Files and adds a Start Menu shortcut.
+The MSI installs a self-contained `VramVue.exe` under Program Files and adds a Start Menu shortcut. The portable zip contains the same self-contained executable.
 
 ## Install
 
@@ -63,13 +70,13 @@ msiexec /x .\dist\VRAMVue-Setup-v6.0.0-win-x64.msi
 dotnet build C:\git\vram-op\VramOp.csproj -c Release
 ```
 
-The framework-dependent build executable is written to:
+The framework-dependent developer build executable is written to:
 
 ```text
 C:\git\vram-op\bin\Release\net8.0-windows\VramVue.exe
 ```
 
-For distribution, prefer the MSI build script because it publishes a self-contained win-x64 executable first.
+Do not distribute the developer build folder unless the target PC already has compatible .NET 8 runtimes installed. For distribution, use the MSI or portable zip because both publish a self-contained win-x64 executable first.
 
 ## Multi-PC Setup
 
@@ -91,6 +98,24 @@ Double-click or right-click a host card to open a detached monitor widget for th
 - Resize from the edges.
 - Right-click and choose **Close**, or press `Esc`.
 - Configure opacity and stay-on-top behavior in **Settings > Monitor popouts**.
+
+## Troubleshooting Direct EXE Launches
+
+If `VramVue.exe` does not open when copied from `bin\Release\net8.0-windows`, check the Windows Application log for `.NET Runtime` errors.
+
+The developer build requires these shared frameworks on the target PC:
+
+- `Microsoft.NETCore.App 8.x`
+- `Microsoft.WindowsDesktop.App 8.x`
+- `Microsoft.AspNetCore.App 8.x`
+
+If any are missing or corrupt, use the MSI or portable zip instead. The v6 distribution artifacts are self-contained and do not rely on the machine's installed .NET runtime.
+
+Example runtime check:
+
+```powershell
+dotnet --list-runtimes
+```
 
 ## Security Model
 

@@ -11,6 +11,7 @@ $publishDir = Join-Path $repoRoot "artifacts\publish\$RuntimeIdentifier-v$Versio
 $wixIntermediateDir = Join-Path $repoRoot "artifacts\wix\$RuntimeIdentifier-v$Version"
 $distDir = Join-Path $repoRoot "dist"
 $msiPath = Join-Path $distDir "VRAMVue-Setup-v$Version-$RuntimeIdentifier.msi"
+$portableZipPath = Join-Path $distDir "VRAMVue-Portable-v$Version-$RuntimeIdentifier.zip"
 $wxsPath = Join-Path $repoRoot "installer\VRAMVue.wxs"
 
 $wix = Get-Command wix -ErrorAction SilentlyContinue
@@ -42,4 +43,13 @@ wix build $wxsPath `
     -intermediatefolder $wixIntermediateDir `
     -out $msiPath
 
-Get-Item $msiPath
+if (Test-Path $portableZipPath) {
+    Remove-Item -Path $portableZipPath -Force
+}
+
+Compress-Archive `
+    -Path (Join-Path $publishDir "VramVue.exe") `
+    -DestinationPath $portableZipPath `
+    -CompressionLevel Optimal
+
+Get-Item $msiPath, $portableZipPath
