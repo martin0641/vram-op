@@ -10,7 +10,7 @@ internal sealed class AppSettings
     public int ListenerPort { get; set; } = 54545;
     public string Username { get; set; } = "vram";
     public string ProtectedPassword { get; set; } = string.Empty;
-    public int UpdateIntervalMs { get; set; } = 1000;
+    public int UpdateIntervalMs { get; set; } = 250;
     public bool ConfirmTaskKills { get; set; } = true;
     public List<RemoteHostConfig> RemoteHosts { get; set; } = [];
 

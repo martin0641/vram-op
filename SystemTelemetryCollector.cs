@@ -9,6 +9,8 @@ internal sealed class SystemTelemetryCollector : IDisposable
 {
     private readonly GpuProcessMemoryReader _gpuMemoryReader = new();
     private readonly GpuUtilizationReader _gpuUtilizationReader = new();
+    private readonly UsageSampler _usageSampler;
+    private readonly object _cpuCounterGate = new();
     private readonly PerformanceCounter? _cpuCounter;
     private readonly List<GpuAdapterInfo> _adapters;
     private readonly string _hostId;
@@ -28,6 +30,8 @@ internal sealed class SystemTelemetryCollector : IDisposable
         {
             _cpuCounter = null;
         }
+
+        _usageSampler = new UsageSampler(ReadCpuPercent, _gpuUtilizationReader.ReadPercent);
     }
 
     public HostTelemetry Read()
@@ -35,8 +39,7 @@ internal sealed class SystemTelemetryCollector : IDisposable
         var gpuSnapshot = _gpuMemoryReader.Read();
         var restartIndex = ProcessRestartIndex.Read();
         var memory = ReadMemoryStatus();
-        var gpuPercent = _gpuUtilizationReader.ReadPercent();
-        var cpuPercent = ReadCpuPercent();
+        var averagedUsage = _usageSampler.ReadAverage();
         var topProcesses = gpuSnapshot.Rows
             .OrderByDescending(row => row.LocalBytes)
             .ThenByDescending(row => row.DedicatedBytes)
@@ -72,8 +75,8 @@ internal sealed class SystemTelemetryCollector : IDisposable
             _hostId,
             Environment.MachineName,
             DateTimeOffset.Now,
-            cpuPercent,
-            gpuPercent,
+            averagedUsage.CpuPercent,
+            averagedUsage.GpuPercent,
             memory.UsedBytes,
             memory.TotalBytes,
             gpuSnapshot.AdapterMemory.DedicatedBytes,
@@ -262,8 +265,9 @@ internal sealed class SystemTelemetryCollector : IDisposable
             return;
         }
 
-        _cpuCounter?.Dispose();
+        _usageSampler.Dispose();
         _gpuUtilizationReader.Dispose();
+        _cpuCounter?.Dispose();
         _disposed = true;
     }
 
@@ -271,7 +275,10 @@ internal sealed class SystemTelemetryCollector : IDisposable
     {
         try
         {
-            return ClampPercent(_cpuCounter?.NextValue() ?? 0);
+            lock (_cpuCounterGate)
+            {
+                return ClampPercent(_cpuCounter?.NextValue() ?? 0);
+            }
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Win32Exception)
         {
@@ -486,59 +493,41 @@ internal sealed class SystemTelemetryCollector : IDisposable
 
     private readonly record struct MemoryStatus(long TotalBytes, long UsedBytes);
 
-    private sealed class GpuUtilizationReader : IDisposable
+    private sealed class UsageSampler : IDisposable
     {
-        private const string CategoryName = "GPU Engine";
-        private const string CounterName = "Utilization Percentage";
-        private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan SampleInterval = TimeSpan.FromMilliseconds(250);
+        private static readonly TimeSpan Window = TimeSpan.FromSeconds(1);
 
-        private readonly Dictionary<string, PerformanceCounter> _counters = [];
-        private DateTimeOffset _lastRefresh = DateTimeOffset.MinValue;
+        private readonly Func<double> _readCpuPercent;
+        private readonly Func<double> _readGpuPercent;
+        private readonly Queue<UsageSample> _samples = [];
+        private readonly object _gate = new();
+        private readonly CancellationTokenSource _cts = new();
+        private readonly Task _sampleTask;
         private bool _disposed;
 
-        public double ReadPercent()
+        public UsageSampler(Func<double> readCpuPercent, Func<double> readGpuPercent)
         {
-            if (_disposed)
+            _readCpuPercent = readCpuPercent;
+            _readGpuPercent = readGpuPercent;
+            SampleNow();
+            _sampleTask = Task.Run(RunAsync);
+        }
+
+        public UsageSample ReadAverage()
+        {
+            var now = DateTimeOffset.Now;
+
+            lock (_gate)
             {
-                return 0;
-            }
+                Prune(now);
 
-            try
-            {
-                if (DateTimeOffset.Now - _lastRefresh >= RefreshInterval)
-                {
-                    RefreshCounters();
-                }
-
-                double total = 0;
-                List<string>? staleCounters = null;
-
-                foreach (var (instance, counter) in _counters)
-                {
-                    try
-                    {
-                        total += counter.NextValue();
-                    }
-                    catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Win32Exception)
-                    {
-                        staleCounters ??= [];
-                        staleCounters.Add(instance);
-                    }
-                }
-
-                if (staleCounters is not null)
-                {
-                    foreach (var instance in staleCounters)
-                    {
-                        RemoveCounter(instance);
-                    }
-                }
-
-                return ClampPercent(total);
-            }
-            catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Win32Exception)
-            {
-                return 0;
+                return _samples.Count == 0
+                    ? new UsageSample(now, 0, 0)
+                    : new UsageSample(
+                        now,
+                        _samples.Average(sample => sample.CpuPercent),
+                        _samples.Average(sample => sample.GpuPercent));
             }
         }
 
@@ -549,13 +538,155 @@ internal sealed class SystemTelemetryCollector : IDisposable
                 return;
             }
 
-            foreach (var counter in _counters.Values)
+            _cts.Cancel();
+            try
             {
-                counter.Dispose();
+                _sampleTask.Wait(TimeSpan.FromSeconds(1));
+            }
+            catch (AggregateException)
+            {
+                // Shutdown is already in progress; the sampler will be torn down with the process.
             }
 
-            _counters.Clear();
+            _cts.Dispose();
             _disposed = true;
+        }
+
+        private async Task RunAsync()
+        {
+            try
+            {
+                using var timer = new PeriodicTimer(SampleInterval);
+                while (await timer.WaitForNextTickAsync(_cts.Token))
+                {
+                    SampleNow();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Normal shutdown.
+            }
+        }
+
+        private void SampleNow()
+        {
+            var now = DateTimeOffset.Now;
+            var sample = new UsageSample(
+                now,
+                ClampPercent(ReadUsage(_readCpuPercent)),
+                ClampPercent(ReadUsage(_readGpuPercent)));
+
+            lock (_gate)
+            {
+                _samples.Enqueue(sample);
+                Prune(now);
+            }
+        }
+
+        private void Prune(DateTimeOffset now)
+        {
+            var cutoff = now - Window;
+            while (_samples.Count > 0 && _samples.Peek().CapturedAt < cutoff)
+            {
+                _samples.Dequeue();
+            }
+        }
+
+        private static double ReadUsage(Func<double> read)
+        {
+            try
+            {
+                return read();
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Win32Exception)
+            {
+                return 0;
+            }
+        }
+    }
+
+    private readonly record struct UsageSample(
+        DateTimeOffset CapturedAt,
+        double CpuPercent,
+        double GpuPercent);
+
+    private sealed class GpuUtilizationReader : IDisposable
+    {
+        private const string CategoryName = "GPU Engine";
+        private const string CounterName = "Utilization Percentage";
+        private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(5);
+
+        private readonly Dictionary<string, PerformanceCounter> _counters = [];
+        private readonly object _gate = new();
+        private DateTimeOffset _lastRefresh = DateTimeOffset.MinValue;
+        private bool _disposed;
+
+        public double ReadPercent()
+        {
+            lock (_gate)
+            {
+                if (_disposed)
+                {
+                    return 0;
+                }
+
+                try
+                {
+                    if (DateTimeOffset.Now - _lastRefresh >= RefreshInterval)
+                    {
+                        RefreshCounters();
+                    }
+
+                    double total = 0;
+                    List<string>? staleCounters = null;
+
+                    foreach (var (instance, counter) in _counters)
+                    {
+                        try
+                        {
+                            total += counter.NextValue();
+                        }
+                        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Win32Exception)
+                        {
+                            staleCounters ??= [];
+                            staleCounters.Add(instance);
+                        }
+                    }
+
+                    if (staleCounters is not null)
+                    {
+                        foreach (var instance in staleCounters)
+                        {
+                            RemoveCounter(instance);
+                        }
+                    }
+
+                    return ClampPercent(total);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Win32Exception)
+                {
+                    return 0;
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            lock (_gate)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                foreach (var counter in _counters.Values)
+                {
+                    counter.Dispose();
+                }
+
+                _counters.Clear();
+                _disposed = true;
+            }
         }
 
         private void RefreshCounters()

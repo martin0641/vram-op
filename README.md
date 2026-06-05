@@ -26,7 +26,7 @@ C:\git\vram-op\bin\Release\net8.0-windows\VramVue.exe
 4. On your dashboard computer, add each remote host with the same host/IP, port, username, and password.
 5. Allow the listener port through Windows Firewall if another computer cannot connect.
 
-The update interval accepts values from `250 ms` through `9999 ms`.
+The update interval defaults to `250 ms` and accepts values from `250 ms` through `9999 ms`.
 
 ## Security
 
@@ -41,6 +41,7 @@ The update interval accepts values from `250 ms` through `9999 ms`.
 - `Spill` reports when Windows shows non-local GPU memory usage; `Shared` means the process is using shared system RAM through the GPU path.
 - Summary cards show used memory first, then free or over-physical memory and detected total.
 - The summary uses `GPU Adapter Memory(*)\Dedicated Usage` for adapter-level VRAM used and DXGI dedicated video memory for detected physical total, falling back to WMI only when needed.
+- CPU and GPU utilization are sampled every `250 ms` and reported as a rolling 1-second average for smoother bars.
 - GPU utilization is sampled from `GPU Engine(*)\Utilization Percentage` counters and keeps counters warm between refreshes to avoid first-sample zeroes.
 - The per-process `Dedicated ctr` value is kept for diagnostics, but Windows can over-report it badly for some processes. Treat it as advisory, especially for `dwm.exe` and `csrss.exe`.
 - The app uses Windows performance counters, so it is not tied to NVIDIA, AMD, or Intel command line tools.
