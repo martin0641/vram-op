@@ -8,6 +8,7 @@ namespace VramOp;
 internal sealed class SystemTelemetryCollector : IDisposable
 {
     private readonly GpuProcessMemoryReader _gpuMemoryReader = new();
+    private readonly GpuUtilizationReader _gpuUtilizationReader = new();
     private readonly PerformanceCounter? _cpuCounter;
     private readonly List<GpuAdapterInfo> _adapters;
     private readonly string _hostId;
@@ -34,7 +35,7 @@ internal sealed class SystemTelemetryCollector : IDisposable
         var gpuSnapshot = _gpuMemoryReader.Read();
         var restartIndex = ProcessRestartIndex.Read();
         var memory = ReadMemoryStatus();
-        var gpuPercent = ReadGpuUtilization();
+        var gpuPercent = _gpuUtilizationReader.ReadPercent();
         var cpuPercent = ReadCpuPercent();
         var topProcesses = gpuSnapshot.Rows
             .OrderByDescending(row => row.LocalBytes)
@@ -262,6 +263,7 @@ internal sealed class SystemTelemetryCollector : IDisposable
         }
 
         _cpuCounter?.Dispose();
+        _gpuUtilizationReader.Dispose();
         _disposed = true;
     }
 
@@ -270,45 +272,6 @@ internal sealed class SystemTelemetryCollector : IDisposable
         try
         {
             return ClampPercent(_cpuCounter?.NextValue() ?? 0);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Win32Exception)
-        {
-            return 0;
-        }
-    }
-
-    private static double ReadGpuUtilization()
-    {
-        try
-        {
-            if (!PerformanceCounterCategory.Exists("GPU Engine"))
-            {
-                return 0;
-            }
-
-            var category = new PerformanceCounterCategory("GPU Engine");
-            var instances = category.GetInstanceNames();
-            double total = 0;
-
-            foreach (var instance in instances)
-            {
-                if (!instance.Contains("engtype_", StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                try
-                {
-                    using var counter = new PerformanceCounter("GPU Engine", "% Utilization", instance, readOnly: true);
-                    total += counter.NextValue();
-                }
-                catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Win32Exception)
-                {
-                    // Some GPU engine instances disappear while counters are being read.
-                }
-            }
-
-            return ClampPercent(total);
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Win32Exception)
         {
@@ -522,6 +485,139 @@ internal sealed class SystemTelemetryCollector : IDisposable
     }
 
     private readonly record struct MemoryStatus(long TotalBytes, long UsedBytes);
+
+    private sealed class GpuUtilizationReader : IDisposable
+    {
+        private const string CategoryName = "GPU Engine";
+        private const string CounterName = "Utilization Percentage";
+        private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(5);
+
+        private readonly Dictionary<string, PerformanceCounter> _counters = [];
+        private DateTimeOffset _lastRefresh = DateTimeOffset.MinValue;
+        private bool _disposed;
+
+        public double ReadPercent()
+        {
+            if (_disposed)
+            {
+                return 0;
+            }
+
+            try
+            {
+                if (DateTimeOffset.Now - _lastRefresh >= RefreshInterval)
+                {
+                    RefreshCounters();
+                }
+
+                double total = 0;
+                List<string>? staleCounters = null;
+
+                foreach (var (instance, counter) in _counters)
+                {
+                    try
+                    {
+                        total += counter.NextValue();
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Win32Exception)
+                    {
+                        staleCounters ??= [];
+                        staleCounters.Add(instance);
+                    }
+                }
+
+                if (staleCounters is not null)
+                {
+                    foreach (var instance in staleCounters)
+                    {
+                        RemoveCounter(instance);
+                    }
+                }
+
+                return ClampPercent(total);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Win32Exception)
+            {
+                return 0;
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            foreach (var counter in _counters.Values)
+            {
+                counter.Dispose();
+            }
+
+            _counters.Clear();
+            _disposed = true;
+        }
+
+        private void RefreshCounters()
+        {
+            _lastRefresh = DateTimeOffset.Now;
+
+            if (!PerformanceCounterCategory.Exists(CategoryName))
+            {
+                ClearCounters();
+                return;
+            }
+
+            var category = new PerformanceCounterCategory(CategoryName);
+            var liveInstances = category.GetInstanceNames()
+                .Where(instance => instance.Contains("engtype_", StringComparison.OrdinalIgnoreCase))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var instance in _counters.Keys.Where(instance => !liveInstances.Contains(instance)).ToArray())
+            {
+                RemoveCounter(instance);
+            }
+
+            foreach (var instance in liveInstances)
+            {
+                if (_counters.ContainsKey(instance))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var counter = new PerformanceCounter(CategoryName, CounterName, instance, readOnly: true);
+                    counter.NextValue();
+                    _counters.Add(instance, counter);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Win32Exception)
+                {
+                    // GPU engine instances are short lived; a missed counter will be retried on the next refresh.
+                }
+            }
+        }
+
+        private void ClearCounters()
+        {
+            foreach (var counter in _counters.Values)
+            {
+                counter.Dispose();
+            }
+
+            _counters.Clear();
+        }
+
+        private void RemoveCounter(string instance)
+        {
+            if (!_counters.Remove(instance, out var counter))
+            {
+                return;
+            }
+
+            counter.Dispose();
+        }
+    }
 
     [ComImport]
     [Guid("29038F61-3839-4626-91FD-086879011A05")]
