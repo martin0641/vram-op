@@ -622,6 +622,8 @@ internal sealed class HostCard : Control
     }
 
     public bool IsSelected { get; set; }
+    public bool UseCompactMemoryValues { get; set; }
+
     public int SmoothingDurationMs
     {
         get => _smoothingDurationMs;
@@ -763,8 +765,13 @@ internal sealed class HostCard : Control
         }
     }
 
-    private static string MemoryLine(long usedBytes, long totalBytes)
+    private string MemoryLine(long usedBytes, long totalBytes)
     {
+        if (UseCompactMemoryValues)
+        {
+            return CompactMemoryLine(usedBytes, totalBytes);
+        }
+
         if (totalBytes <= 0)
         {
             return $"{Formatters.BytesPrecise(usedBytes)} used";
@@ -778,6 +785,18 @@ internal sealed class HostCard : Control
 
         return $"{Formatters.BytesPrecise(usedBytes)} used, {Formatters.BytesPrecise(totalBytes - usedBytes)} free";
     }
+
+    private static string CompactMemoryLine(long usedBytes, long totalBytes)
+    {
+        if (totalBytes <= 0)
+        {
+            return $"{BytesAsGb(usedBytes)}GB";
+        }
+
+        return $"{BytesAsGb(usedBytes)}/{BytesAsGb(totalBytes)}GB";
+    }
+
+    private static string BytesAsGb(long bytes) => $"{bytes / 1024D / 1024D / 1024D:N2}";
 
     private void DrawMetricLine(Graphics graphics, string label, double ratio, string value, int y, int lineHeight, Color color)
     {

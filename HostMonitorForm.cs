@@ -1,12 +1,28 @@
+using System.Runtime.InteropServices;
+
 namespace VramOp;
 
 internal sealed class HostMonitorForm : Form
 {
+    private const int WmNchitTest = 0x0084;
+    private const int WmNclButtonDown = 0x00A1;
+    private const int HtLeft = 10;
+    private const int HtRight = 11;
+    private const int HtTop = 12;
+    private const int HtTopLeft = 13;
+    private const int HtTopRight = 14;
+    private const int HtBottom = 15;
+    private const int HtBottomLeft = 16;
+    private const int HtBottomRight = 17;
+    private const int HtCaption = 2;
+
+    private readonly ContextMenuStrip _menu = new();
     private readonly HostCard _card = new()
     {
         Dock = DockStyle.Fill,
         IsSelected = true,
-        Margin = Padding.Empty
+        Margin = Padding.Empty,
+        UseCompactMemoryValues = true
     };
 
     private Font? _cardFont;
@@ -23,15 +39,21 @@ internal sealed class HostMonitorForm : Form
         ForeColor = AppTheme.Text;
         Font = new Font("Segoe UI", 9F);
         AutoScaleMode = AutoScaleMode.Font;
-        FormBorderStyle = FormBorderStyle.Sizable;
+        FormBorderStyle = FormBorderStyle.None;
         MinimizeBox = true;
         MaximizeBox = true;
         ShowInTaskbar = true;
         StartPosition = FormStartPosition.Manual;
         MinimumSize = new Size(280, 190);
         ClientSize = new Size(380, 238);
-        Padding = new Padding(8);
+        Padding = new Padding(6);
+        KeyPreview = true;
 
+        _menu.Items.Add("Close", null, (_, _) => Close());
+        ContextMenuStrip = _menu;
+        _card.ContextMenuStrip = _menu;
+        MouseDown += (_, args) => BeginMove(args);
+        _card.MouseDown += (_, args) => BeginMove(args);
         Controls.Add(_card);
         UpdateCardScale();
     }
@@ -40,6 +62,7 @@ internal sealed class HostMonitorForm : Form
     {
         if (disposing)
         {
+            _menu.Dispose();
             _cardFont?.Dispose();
         }
 
@@ -66,6 +89,97 @@ internal sealed class HostMonitorForm : Form
         UpdateCardScale();
     }
 
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.Escape)
+        {
+            Close();
+            e.Handled = true;
+            return;
+        }
+
+        base.OnKeyDown(e);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WmNchitTest)
+        {
+            var hit = HitTestResizeBorder(m.LParam);
+            if (hit is not null)
+            {
+                m.Result = hit.Value;
+                return;
+            }
+        }
+
+        base.WndProc(ref m);
+    }
+
+    private void BeginMove(MouseEventArgs args)
+    {
+        if (args.Button != MouseButtons.Left || WindowState == FormWindowState.Maximized)
+        {
+            return;
+        }
+
+        ReleaseCapture();
+        SendMessage(Handle, WmNclButtonDown, HtCaption, 0);
+    }
+
+    private nint? HitTestResizeBorder(IntPtr lParam)
+    {
+        var point = PointToClient(GetPointFromLParam(lParam));
+        var grip = Math.Max(6, (int)Math.Round(8 * DeviceDpi / 96D));
+        var left = point.X <= grip;
+        var right = point.X >= ClientSize.Width - grip;
+        var top = point.Y <= grip;
+        var bottom = point.Y >= ClientSize.Height - grip;
+
+        if (top && left)
+        {
+            return HtTopLeft;
+        }
+
+        if (top && right)
+        {
+            return HtTopRight;
+        }
+
+        if (bottom && left)
+        {
+            return HtBottomLeft;
+        }
+
+        if (bottom && right)
+        {
+            return HtBottomRight;
+        }
+
+        if (left)
+        {
+            return HtLeft;
+        }
+
+        if (right)
+        {
+            return HtRight;
+        }
+
+        if (top)
+        {
+            return HtTop;
+        }
+
+        return bottom ? HtBottom : null;
+    }
+
+    private static Point GetPointFromLParam(IntPtr lParam)
+    {
+        var value = lParam.ToInt64();
+        return new Point((short)(value & 0xFFFF), (short)((value >> 16) & 0xFFFF));
+    }
+
     private void UpdateCardScale()
     {
         var contentWidth = Math.Max(1, ClientSize.Width - Padding.Horizontal);
@@ -85,4 +199,10 @@ internal sealed class HostMonitorForm : Form
         _card.Font = _cardFont;
         previousFont?.Dispose();
     }
+
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    private static extern nint SendMessage(nint hWnd, int msg, int wParam, int lParam);
 }
