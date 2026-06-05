@@ -11,6 +11,7 @@ internal sealed class AppSettings
     public string Username { get; set; } = "vram";
     public string ProtectedPassword { get; set; } = string.Empty;
     public int UpdateIntervalMs { get; set; } = 250;
+    public int BarSmoothingMs { get; set; } = 500;
     public bool ConfirmTaskKills { get; set; } = true;
     public List<RemoteHostConfig> RemoteHosts { get; set; } = [];
 

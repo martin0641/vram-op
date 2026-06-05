@@ -38,6 +38,7 @@ internal sealed class MainForm : Form
     private readonly Label _statusLabel = new BufferedLabel();
     private readonly Label _listenerStatusLabel = new BufferedLabel();
     private readonly MaskedTextBox _intervalBox = new("9999");
+    private readonly NumericUpDown _barSmoothingBox = new();
     private readonly RoundedButton _killButton = new() { Text = "Kill selected", Width = 132 };
     private readonly RoundedButton _killParentButton = new() { Text = "End parent", Width = 124, Visible = false };
     private readonly RoundedButton _stopServiceButton = new() { Text = "Stop svc", Width = 96, Visible = false };
@@ -675,14 +676,20 @@ internal sealed class MainForm : Form
         layout.SetColumnSpan(_confirmKillsBox, 2);
 
         AddLabeledControl(layout, "Update every", CreateIntervalEditor(), 3);
-        AddLabeledControl(layout, "Port", _listenerPortBox, 4);
-        AddLabeledControl(layout, "Username", _listenerUserBox, 5);
-        AddLabeledControl(layout, "Password", _listenerPasswordBox, 6);
+        AddLabeledControl(layout, "Bar smoothing", CreateBarSmoothingEditor(), 4);
+        AddLabeledControl(layout, "Port", _listenerPortBox, 5);
+        AddLabeledControl(layout, "Username", _listenerUserBox, 6);
+        AddLabeledControl(layout, "Password", _listenerPasswordBox, 7);
 
         _listenerPortBox.Minimum = 1024;
         _listenerPortBox.Maximum = 65535;
         _listenerPortBox.BackColor = AppTheme.SurfaceRaised;
         _listenerPortBox.ForeColor = AppTheme.Text;
+        _barSmoothingBox.Minimum = 0;
+        _barSmoothingBox.Maximum = 3000;
+        _barSmoothingBox.Increment = 50;
+        _barSmoothingBox.BackColor = AppTheme.SurfaceRaised;
+        _barSmoothingBox.ForeColor = AppTheme.Text;
         _listenerUserBox.BackColor = AppTheme.SurfaceRaised;
         _listenerUserBox.ForeColor = AppTheme.Text;
         _listenerPasswordBox.BackColor = AppTheme.SurfaceRaised;
@@ -693,12 +700,12 @@ internal sealed class MainForm : Form
 
         var saveButton = new RoundedButton { Text = "Save and restart listener", Width = 190 };
         saveButton.Click += async (_, _) => await SaveListenerSettingsAsync();
-        SetSettingsRowHeight(layout, 7, ButtonRowHeight(saveButton));
-        layout.Controls.Add(saveButton, 1, 7);
+        SetSettingsRowHeight(layout, 8, ButtonRowHeight(saveButton));
+        layout.Controls.Add(saveButton, 1, 8);
 
         var note = CreateNoteLabel("Each host uses a local self-signed certificate and requires TLS 1.3. Remote clients pin the certificate hash after the first successful connection.");
-        SetSettingsRowAutoSize(layout, 8);
-        layout.Controls.Add(note, 0, 8);
+        SetSettingsRowAutoSize(layout, 9);
+        layout.Controls.Add(note, 0, 9);
         layout.SetColumnSpan(note, 2);
 
         panel.Controls.Add(layout);
@@ -740,6 +747,39 @@ internal sealed class MainForm : Form
         };
 
         panel.Controls.Add(_intervalBox, 0, 0);
+        panel.Controls.Add(unitLabel, 1, 0);
+        return panel;
+    }
+
+    private Control CreateBarSmoothingEditor()
+    {
+        var panel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            BackColor = AppTheme.Surface
+        };
+        var digitWidth = Math.Max(78, TextRenderer.MeasureText("3000", _barSmoothingBox.Font).Width + 34);
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, digitWidth));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Math.Max(42, TextRenderer.MeasureText("ms", Font).Width + 20)));
+
+        _barSmoothingBox.BorderStyle = BorderStyle.FixedSingle;
+        _barSmoothingBox.TextAlign = HorizontalAlignment.Right;
+        _barSmoothingBox.Width = digitWidth - 10;
+        _barSmoothingBox.Dock = DockStyle.Left;
+        _barSmoothingBox.Margin = new Padding(0, 7, 0, 7);
+
+        var unitLabel = new Label
+        {
+            Text = "ms",
+            Dock = DockStyle.Fill,
+            ForeColor = AppTheme.MutedText,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Margin = new Padding(8, 0, 0, 0)
+        };
+
+        panel.Controls.Add(_barSmoothingBox, 0, 0);
         panel.Controls.Add(unitLabel, 1, 0);
         return panel;
     }
@@ -963,6 +1003,8 @@ internal sealed class MainForm : Form
             args.SuppressKeyPress = true;
         };
         _intervalBox.Enter += (_, _) => _intervalBox.SelectAll();
+        _barSmoothingBox.ValueChanged += (_, _) => ApplyBarSmoothingFromBox(save: false);
+        _barSmoothingBox.Leave += (_, _) => ApplyBarSmoothingFromBox(save: true);
         _killButton.Click += async (_, _) => await KillSelectedProcessAsync();
         _killParentButton.Click += async (_, _) => await KillSelectedParentProcessAsync();
         _stopServiceButton.Click += async (_, _) => await ControlSelectedServiceAsync(ServiceControlAction.Stop);
@@ -984,13 +1026,16 @@ internal sealed class MainForm : Form
     private void LoadSettingsIntoControls()
     {
         _settings.UpdateIntervalMs = Math.Clamp(_settings.UpdateIntervalMs, 250, 9999);
+        _settings.BarSmoothingMs = Math.Clamp(_settings.BarSmoothingMs, 0, 3000);
         _intervalBox.Text = _settings.UpdateIntervalMs.ToString("0000");
+        _barSmoothingBox.Value = _settings.BarSmoothingMs;
 
         _listenerEnabledBox.Checked = _settings.ListenerEnabled;
         _confirmKillsBox.Checked = _settings.ConfirmTaskKills;
         _listenerPortBox.Value = Math.Clamp(_settings.ListenerPort, 1024, 65535);
         _listenerUserBox.Text = _settings.Username;
         _listenerPasswordBox.Text = _settings.GetPassword();
+        ApplyBarSmoothingToControls();
         RefreshRemoteList();
     }
 
@@ -1015,6 +1060,38 @@ internal sealed class MainForm : Form
         if (!string.Equals(_intervalBox.Text, formatted, StringComparison.Ordinal))
         {
             _intervalBox.Text = formatted;
+        }
+    }
+
+    private void ApplyBarSmoothingFromBox(bool save)
+    {
+        var smoothingMs = Math.Clamp((int)_barSmoothingBox.Value, 0, 3000);
+        if (_settings.BarSmoothingMs != smoothingMs)
+        {
+            _settings.BarSmoothingMs = smoothingMs;
+            ApplyBarSmoothingToControls();
+            if (save)
+            {
+                SettingsStore.Save(_settings);
+            }
+        }
+
+        if (_barSmoothingBox.Value != smoothingMs)
+        {
+            _barSmoothingBox.Value = smoothingMs;
+        }
+    }
+
+    private void ApplyBarSmoothingToControls()
+    {
+        foreach (var card in new[] { _cpuCard, _ramCard, _gpuCard, _vramCard })
+        {
+            card.SmoothingDurationMs = _settings.BarSmoothingMs;
+        }
+
+        foreach (var card in _hostCards.Values)
+        {
+            card.SmoothingDurationMs = _settings.BarSmoothingMs;
         }
     }
 
@@ -1331,6 +1408,7 @@ internal sealed class MainForm : Form
                 _hostCards[snapshot.Id] = card;
             }
 
+            card.SmoothingDurationMs = _settings.BarSmoothingMs;
             card.Snapshot = snapshot;
             card.IsSelected = snapshot.Id == _selectedHostId;
             var scrollReserve = orderedSnapshots.Length > 1 ? SystemInformation.VerticalScrollBarWidth : 0;
@@ -1647,6 +1725,7 @@ internal sealed class MainForm : Form
     private async Task SaveListenerSettingsAsync()
     {
         ApplyUpdateIntervalFromBox();
+        ApplyBarSmoothingFromBox(save: false);
         var username = InputRules.NormalizeBasicAuthUsername(_listenerUserBox.Text);
         var password = InputRules.NormalizePassword(_listenerPasswordBox.Text);
 

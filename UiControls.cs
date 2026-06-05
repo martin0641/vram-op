@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 
@@ -102,6 +103,88 @@ internal sealed class BufferedLabel : Label
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
         ResizeRedraw = true;
     }
+}
+
+internal sealed class AnimatedRatio
+{
+    private const double Epsilon = 0.0005;
+    private double _start;
+    private long _startedAt = Stopwatch.GetTimestamp();
+
+    public double Target { get; private set; }
+    public double Display { get; private set; }
+    public bool IsActive => Math.Abs(Display - Target) > Epsilon;
+
+    public void SetTarget(double value, int durationMs)
+    {
+        value = Clamp(value);
+        Update(durationMs);
+        if (Math.Abs(Target - value) <= Epsilon)
+        {
+            return;
+        }
+
+        Target = value;
+        if (durationMs <= 0)
+        {
+            SnapTo(value);
+            return;
+        }
+
+        _start = Display;
+        _startedAt = Stopwatch.GetTimestamp();
+    }
+
+    public bool Update(int durationMs)
+    {
+        if (!IsActive)
+        {
+            return false;
+        }
+
+        var previous = Display;
+        if (durationMs <= 0)
+        {
+            Display = Target;
+            _start = Target;
+            _startedAt = Stopwatch.GetTimestamp();
+            return HasChanged(previous);
+        }
+
+        var elapsedMs = (Stopwatch.GetTimestamp() - _startedAt) * 1000.0 / Stopwatch.Frequency;
+        var progress = Math.Clamp(elapsedMs / durationMs, 0, 1);
+        if (progress >= 1)
+        {
+            Display = Target;
+        }
+        else
+        {
+            var eased = 1 - Math.Pow(1 - progress, 3);
+            Display = _start + (Target - _start) * eased;
+        }
+
+        return HasChanged(previous);
+    }
+
+    public void SnapTo(double value)
+    {
+        Target = Clamp(value);
+        Display = Target;
+        _start = Target;
+        _startedAt = Stopwatch.GetTimestamp();
+    }
+
+    private static double Clamp(double value)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value))
+        {
+            return 0;
+        }
+
+        return Math.Clamp(value, 0, 1);
+    }
+
+    private bool HasChanged(double previous) => Math.Abs(Display - previous) > Epsilon;
 }
 
 internal sealed class BufferedDataGridView : DataGridView
@@ -263,19 +346,65 @@ internal sealed class RoundedButton : Button
 
 internal sealed class MetricCard : Control
 {
+    private readonly System.Windows.Forms.Timer _animationTimer;
+    private readonly AnimatedRatio _ratio = new();
+    private int _smoothingDurationMs = 500;
+
     public string Title { get; set; } = string.Empty;
     public string ValueText { get; set; } = string.Empty;
     public string DetailText { get; set; } = string.Empty;
-    public double Ratio { get; set; }
+    public double Ratio
+    {
+        get => _ratio.Target;
+        set
+        {
+            _ratio.SetTarget(value, SmoothingDurationMs);
+            if (_ratio.IsActive)
+            {
+                StartAnimation();
+            }
+
+            Invalidate();
+        }
+    }
+
+    public int SmoothingDurationMs
+    {
+        get => _smoothingDurationMs;
+        set
+        {
+            _smoothingDurationMs = Math.Clamp(value, 0, 3000);
+            if (_smoothingDurationMs == 0)
+            {
+                _ratio.SnapTo(_ratio.Target);
+                _animationTimer.Stop();
+            }
+
+            Invalidate();
+        }
+    }
+
     public Color AccentColor { get; set; } = AppTheme.Accent;
 
     public MetricCard()
     {
+        _animationTimer = new System.Windows.Forms.Timer { Interval = 16 };
+        _animationTimer.Tick += (_, _) => AdvanceAnimation();
         DoubleBuffered = true;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
         MinimumSize = new Size(160, 104);
         Margin = new Padding(0, 0, 10, 10);
         Font = new Font("Segoe UI", 9F);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _animationTimer.Dispose();
+        }
+
+        base.Dispose(disposing);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -306,7 +435,7 @@ internal sealed class MetricCard : Control
         if (compact)
         {
             DrawCompactLine(e.Graphics, inner, textHeight);
-            DrawProgress(e.Graphics, barRect, Ratio, AccentColor);
+            DrawProgress(e.Graphics, barRect, _ratio.Display, AccentColor);
             return;
         }
 
@@ -346,7 +475,35 @@ internal sealed class MetricCard : Control
             TextRenderer.DrawText(e.Graphics, DetailText, Font, detailRect, AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
         }
 
-        DrawProgress(e.Graphics, barRect, Ratio, AccentColor);
+        DrawProgress(e.Graphics, barRect, _ratio.Display, AccentColor);
+    }
+
+    private void StartAnimation()
+    {
+        if (!_animationTimer.Enabled)
+        {
+            _animationTimer.Start();
+        }
+    }
+
+    private void AdvanceAnimation()
+    {
+        if (!_ratio.Update(SmoothingDurationMs))
+        {
+            if (!_ratio.IsActive)
+            {
+                _animationTimer.Stop();
+            }
+
+            return;
+        }
+
+        if (!_ratio.IsActive)
+        {
+            _animationTimer.Stop();
+        }
+
+        Invalidate();
     }
 
     private Font CreateFittingValueFont(Graphics graphics, string text, float startingSize, int availableHeight)
@@ -445,11 +602,50 @@ internal sealed class MetricCard : Control
 
 internal sealed class HostCard : Control
 {
-    public HostSnapshot? Snapshot { get; set; }
+    private readonly System.Windows.Forms.Timer _animationTimer;
+    private readonly AnimatedRatio _cpuRatio = new();
+    private readonly AnimatedRatio _ramRatio = new();
+    private readonly AnimatedRatio _gpuRatio = new();
+    private readonly AnimatedRatio _vramRatio = new();
+    private HostSnapshot? _snapshot;
+    private int _smoothingDurationMs = 500;
+
+    public HostSnapshot? Snapshot
+    {
+        get => _snapshot;
+        set
+        {
+            _snapshot = value;
+            UpdateRatioTargets();
+            Invalidate();
+        }
+    }
+
     public bool IsSelected { get; set; }
+    public int SmoothingDurationMs
+    {
+        get => _smoothingDurationMs;
+        set
+        {
+            _smoothingDurationMs = Math.Clamp(value, 0, 3000);
+            if (_smoothingDurationMs == 0)
+            {
+                SnapRatiosToTargets();
+                _animationTimer.Stop();
+            }
+            else
+            {
+                UpdateRatioTargets();
+            }
+
+            Invalidate();
+        }
+    }
 
     public HostCard()
     {
+        _animationTimer = new System.Windows.Forms.Timer { Interval = 16 };
+        _animationTimer.Tick += (_, _) => AdvanceAnimations();
         DoubleBuffered = true;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
         Cursor = Cursors.Hand;
@@ -459,9 +655,20 @@ internal sealed class HostCard : Control
         Font = new Font("Segoe UI", 9F);
     }
 
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _animationTimer.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
-        if (Snapshot is null)
+        var snapshot = Snapshot;
+        if (snapshot is null)
         {
             using var emptyBackdrop = new SolidBrush(Parent?.BackColor ?? AppTheme.Surface);
             e.Graphics.FillRectangle(emptyBackdrop, ClientRectangle);
@@ -486,17 +693,74 @@ internal sealed class HostCard : Control
         var pad = compact ? Math.Max(10, Font.Height / 2) : Math.Max(12, Font.Height);
         var inner = Rectangle.Inflate(rect, -pad, -pad);
         using var titleFont = new Font("Segoe UI", compact ? 9F : 10F, FontStyle.Bold);
-        var titleHeight = TextRenderer.MeasureText(e.Graphics, Snapshot.DisplayName, titleFont, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
+        var titleHeight = TextRenderer.MeasureText(e.Graphics, snapshot.DisplayName, titleFont, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
         var statusHeight = TextRenderer.MeasureText(e.Graphics, "Hg", Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
-        TextRenderer.DrawText(e.Graphics, Snapshot.DisplayName, titleFont, new Rectangle(inner.Left, inner.Top, inner.Width, titleHeight), AppTheme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
-        TextRenderer.DrawText(e.Graphics, Snapshot.Status, Font, new Rectangle(inner.Left, inner.Top + titleHeight, inner.Width, statusHeight), AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        TextRenderer.DrawText(e.Graphics, snapshot.DisplayName, titleFont, new Rectangle(inner.Left, inner.Top, inner.Width, titleHeight), AppTheme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        TextRenderer.DrawText(e.Graphics, snapshot.Status, Font, new Rectangle(inner.Left, inner.Top + titleHeight, inner.Width, statusHeight), AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
 
         var lineHeight = compact ? Math.Max(Font.Height + 3, 22) : Math.Max(Font.Height + 8, 26);
         var y = inner.Top + titleHeight + statusHeight + (compact ? 4 : Math.Max(10, Font.Height / 2));
-        DrawMetricLine(e.Graphics, "CPU", Snapshot.CpuPercent / 100, Formatters.Percent(Snapshot.CpuPercent), y, lineHeight, AppTheme.Accent);
-        DrawMetricLine(e.Graphics, "RAM", Formatters.Ratio(Snapshot.RamUsedBytes, Snapshot.RamTotalBytes), MemoryLine(Snapshot.RamUsedBytes, Snapshot.RamTotalBytes), y + lineHeight, lineHeight, AppTheme.Good);
-        DrawMetricLine(e.Graphics, "GPU", Snapshot.GpuPercent / 100, Formatters.Percent(Snapshot.GpuPercent), y + lineHeight * 2, lineHeight, AppTheme.Warning);
-        DrawMetricLine(e.Graphics, "VRAM", Formatters.Ratio(Snapshot.VramUsedBytes, Snapshot.VramTotalBytes), MemoryLine(Snapshot.VramUsedBytes, Snapshot.VramTotalBytes), y + lineHeight * 3, lineHeight, AppTheme.Danger);
+        DrawMetricLine(e.Graphics, "CPU", _cpuRatio.Display, Formatters.Percent(snapshot.CpuPercent), y, lineHeight, AppTheme.Accent);
+        DrawMetricLine(e.Graphics, "RAM", _ramRatio.Display, MemoryLine(snapshot.RamUsedBytes, snapshot.RamTotalBytes), y + lineHeight, lineHeight, AppTheme.Good);
+        DrawMetricLine(e.Graphics, "GPU", _gpuRatio.Display, Formatters.Percent(snapshot.GpuPercent), y + lineHeight * 2, lineHeight, AppTheme.Warning);
+        DrawMetricLine(e.Graphics, "VRAM", _vramRatio.Display, MemoryLine(snapshot.VramUsedBytes, snapshot.VramTotalBytes), y + lineHeight * 3, lineHeight, AppTheme.Danger);
+    }
+
+    private void UpdateRatioTargets()
+    {
+        if (_snapshot is null)
+        {
+            _cpuRatio.SnapTo(0);
+            _ramRatio.SnapTo(0);
+            _gpuRatio.SnapTo(0);
+            _vramRatio.SnapTo(0);
+            _animationTimer.Stop();
+            return;
+        }
+
+        _cpuRatio.SetTarget(_snapshot.CpuPercent / 100, SmoothingDurationMs);
+        _ramRatio.SetTarget(Formatters.Ratio(_snapshot.RamUsedBytes, _snapshot.RamTotalBytes), SmoothingDurationMs);
+        _gpuRatio.SetTarget(_snapshot.GpuPercent / 100, SmoothingDurationMs);
+        _vramRatio.SetTarget(Formatters.Ratio(_snapshot.VramUsedBytes, _snapshot.VramTotalBytes), SmoothingDurationMs);
+
+        if (_cpuRatio.IsActive || _ramRatio.IsActive || _gpuRatio.IsActive || _vramRatio.IsActive)
+        {
+            StartAnimation();
+        }
+    }
+
+    private void SnapRatiosToTargets()
+    {
+        _cpuRatio.SnapTo(_cpuRatio.Target);
+        _ramRatio.SnapTo(_ramRatio.Target);
+        _gpuRatio.SnapTo(_gpuRatio.Target);
+        _vramRatio.SnapTo(_vramRatio.Target);
+    }
+
+    private void StartAnimation()
+    {
+        if (!_animationTimer.Enabled)
+        {
+            _animationTimer.Start();
+        }
+    }
+
+    private void AdvanceAnimations()
+    {
+        var changed = _cpuRatio.Update(SmoothingDurationMs)
+            | _ramRatio.Update(SmoothingDurationMs)
+            | _gpuRatio.Update(SmoothingDurationMs)
+            | _vramRatio.Update(SmoothingDurationMs);
+
+        if (!_cpuRatio.IsActive && !_ramRatio.IsActive && !_gpuRatio.IsActive && !_vramRatio.IsActive)
+        {
+            _animationTimer.Stop();
+        }
+
+        if (changed)
+        {
+            Invalidate();
+        }
     }
 
     private static string MemoryLine(long usedBytes, long totalBytes)
