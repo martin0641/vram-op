@@ -34,12 +34,7 @@ For users who want to unzip and run `VramVue.exe` directly, use the portable sel
 dist\VRAMVue-Portable-v6.0.0-win-x64.zip
 ```
 
-Current local v6 SHA-256 hashes:
-
-```text
-VRAMVue-Setup-v6.0.0-win-x64.msi     DCF9ABB82A9CE3EF5B9B7D9B95A4D8F9B912DC4CE9DAE953F870F44515507905
-VRAMVue-Portable-v6.0.0-win-x64.zip  A931E731E1F6FACFBDCA1DB3A9D8EDCD6CFE561B2D0B1FF5787D97AED74B663A
-```
+The GitHub release notes include SHA-256 hashes for the actual downloadable files.
 
 To rebuild both artifacts from source:
 

@@ -77,10 +77,10 @@ jobs:
 
           ## SHA-256
 
-          ```text
+          ~~~text
           VRAMVue-Setup-v$env:VRAM_VUE_VERSION-win-x64.msi     $msiHash
           VRAMVue-Portable-v$env:VRAM_VUE_VERSION-win-x64.zip  $zipHash
-          ```
+          ~~~
           "@ | Set-Content -Path release-notes.md -Encoding utf8
 
       - name: Publish GitHub release
