@@ -647,7 +647,7 @@ internal sealed class HostCard : Control
         _animationTimer = new System.Windows.Forms.Timer { Interval = 16 };
         _animationTimer.Tick += (_, _) => AdvanceAnimations();
         DoubleBuffered = true;
-        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.StandardClick | ControlStyles.StandardDoubleClick | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
         Cursor = Cursors.Hand;
         Width = 330;
         Height = 208;
@@ -692,7 +692,7 @@ internal sealed class HostCard : Control
         var compact = Height < 220 || Width < 240;
         var pad = compact ? Math.Max(10, Font.Height / 2) : Math.Max(12, Font.Height);
         var inner = Rectangle.Inflate(rect, -pad, -pad);
-        using var titleFont = new Font("Segoe UI", compact ? 9F : 10F, FontStyle.Bold);
+        using var titleFont = new Font(Font.FontFamily, Font.Size + (compact ? 0.5F : 1.5F), FontStyle.Bold);
         var titleHeight = TextRenderer.MeasureText(e.Graphics, snapshot.DisplayName, titleFont, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
         var statusHeight = TextRenderer.MeasureText(e.Graphics, "Hg", Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
         TextRenderer.DrawText(e.Graphics, snapshot.DisplayName, titleFont, new Rectangle(inner.Left, inner.Top, inner.Width, titleHeight), AppTheme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);

@@ -16,6 +16,7 @@ internal sealed class MainForm : Form
     private readonly RemoteTelemetryClient _remoteClient = new();
     private readonly Dictionary<Guid, HostSnapshot> _hostSnapshots = [];
     private readonly Dictionary<Guid, HostCard> _hostCards = [];
+    private readonly Dictionary<Guid, HostMonitorForm> _monitorWindows = [];
     private readonly BindingSource _processBinding = new();
     private readonly NotifyIcon _notifyIcon = new();
     private readonly Icon _appIcon;
@@ -51,7 +52,9 @@ internal sealed class MainForm : Form
     private readonly RoundedButton _hideButton = new() { Text = "Hide to tray", Width = 132 };
     private readonly CheckBox _listenerEnabledBox = new();
     private readonly CheckBox _confirmKillsBox = new();
+    private readonly CheckBox _monitorTopMostBox = new();
     private readonly NumericUpDown _listenerPortBox = new();
+    private readonly NumericUpDown _monitorOpacityBox = new();
     private readonly TextBox _listenerUserBox = new();
     private readonly TextBox _listenerPasswordBox = new();
     private readonly ListBox _remoteListBox = new();
@@ -97,6 +100,13 @@ internal sealed class MainForm : Form
             _refreshCts?.Cancel();
             _refreshCts?.Dispose();
             StopPolling();
+            foreach (var window in _monitorWindows.Values.ToArray())
+            {
+                window.Close();
+                window.Dispose();
+            }
+
+            _monitorWindows.Clear();
             _notifyIcon.Dispose();
             _appIcon.Dispose();
             _collector.Dispose();
@@ -640,10 +650,28 @@ internal sealed class MainForm : Form
         _settingsContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         _settingsContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
 
-        _settingsContent.Controls.Add(BuildListenerSettings(), 0, 0);
+        _settingsContent.Controls.Add(BuildLocalSettingsColumn(), 0, 0);
         _settingsContent.Controls.Add(BuildRemoteSettings(), 1, 0);
         scroll.Controls.Add(_settingsContent);
         _settingsPage.Controls.Add(scroll);
+    }
+
+    private Control BuildLocalSettingsColumn()
+    {
+        var column = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            ColumnCount = 1,
+            RowCount = 2,
+            BackColor = AppTheme.Background
+        };
+        column.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        column.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        column.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        column.Controls.Add(BuildListenerSettings(), 0, 0);
+        column.Controls.Add(BuildMonitorSettings(), 0, 1);
+        return column;
     }
 
     private Control BuildListenerSettings()
@@ -707,6 +735,39 @@ internal sealed class MainForm : Form
         SetSettingsRowAutoSize(layout, 9);
         layout.Controls.Add(note, 0, 9);
         layout.SetColumnSpan(note, 2);
+
+        panel.Controls.Add(layout);
+        return panel;
+    }
+
+    private Control BuildMonitorSettings()
+    {
+        var panel = new RoundedPanel
+        {
+            Dock = DockStyle.Top,
+            Margin = new Padding(0, 12, 12, 0),
+            BackColor = AppTheme.Surface,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(0, 0)
+        };
+
+        var layout = CreateSettingsLayout();
+        AddSectionTitle(layout, "Monitor popouts", 0);
+
+        _monitorTopMostBox.Text = "Keep popout monitors on top";
+        _monitorTopMostBox.ForeColor = AppTheme.Text;
+        _monitorTopMostBox.AutoSize = true;
+        SetSettingsRowHeight(layout, 1, CheckBoxRowHeight(_monitorTopMostBox));
+        layout.Controls.Add(_monitorTopMostBox, 0, 1);
+        layout.SetColumnSpan(_monitorTopMostBox, 2);
+
+        AddLabeledControl(layout, "Opacity", CreateMonitorOpacityEditor(), 2);
+        _monitorOpacityBox.Minimum = 30;
+        _monitorOpacityBox.Maximum = 100;
+        _monitorOpacityBox.Increment = 5;
+        _monitorOpacityBox.BackColor = AppTheme.SurfaceRaised;
+        _monitorOpacityBox.ForeColor = AppTheme.Text;
 
         panel.Controls.Add(layout);
         return panel;
@@ -780,6 +841,39 @@ internal sealed class MainForm : Form
         };
 
         panel.Controls.Add(_barSmoothingBox, 0, 0);
+        panel.Controls.Add(unitLabel, 1, 0);
+        return panel;
+    }
+
+    private Control CreateMonitorOpacityEditor()
+    {
+        var panel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            BackColor = AppTheme.Surface
+        };
+        var digitWidth = Math.Max(72, TextRenderer.MeasureText("100", _monitorOpacityBox.Font).Width + 34);
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, digitWidth));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Math.Max(40, TextRenderer.MeasureText("%", Font).Width + 20)));
+
+        _monitorOpacityBox.BorderStyle = BorderStyle.FixedSingle;
+        _monitorOpacityBox.TextAlign = HorizontalAlignment.Right;
+        _monitorOpacityBox.Width = digitWidth - 10;
+        _monitorOpacityBox.Dock = DockStyle.Left;
+        _monitorOpacityBox.Margin = new Padding(0, 7, 0, 7);
+
+        var unitLabel = new Label
+        {
+            Text = "%",
+            Dock = DockStyle.Fill,
+            ForeColor = AppTheme.MutedText,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Margin = new Padding(8, 0, 0, 0)
+        };
+
+        panel.Controls.Add(_monitorOpacityBox, 0, 0);
         panel.Controls.Add(unitLabel, 1, 0);
         return panel;
     }
@@ -1005,6 +1099,8 @@ internal sealed class MainForm : Form
         _intervalBox.Enter += (_, _) => _intervalBox.SelectAll();
         _barSmoothingBox.ValueChanged += (_, _) => ApplyBarSmoothingFromBox(save: false);
         _barSmoothingBox.Leave += (_, _) => ApplyBarSmoothingFromBox(save: true);
+        _monitorTopMostBox.CheckedChanged += (_, _) => ApplyMonitorWindowOptions(save: true);
+        _monitorOpacityBox.ValueChanged += (_, _) => ApplyMonitorWindowOptions(save: true);
         _killButton.Click += async (_, _) => await KillSelectedProcessAsync();
         _killParentButton.Click += async (_, _) => await KillSelectedParentProcessAsync();
         _stopServiceButton.Click += async (_, _) => await ControlSelectedServiceAsync(ServiceControlAction.Stop);
@@ -1027,8 +1123,11 @@ internal sealed class MainForm : Form
     {
         _settings.UpdateIntervalMs = Math.Clamp(_settings.UpdateIntervalMs, 250, 9999);
         _settings.BarSmoothingMs = Math.Clamp(_settings.BarSmoothingMs, 0, 3000);
+        _settings.MonitorWindowOpacityPercent = Math.Clamp(_settings.MonitorWindowOpacityPercent, 30, 100);
         _intervalBox.Text = _settings.UpdateIntervalMs.ToString("0000");
         _barSmoothingBox.Value = _settings.BarSmoothingMs;
+        _monitorTopMostBox.Checked = _settings.MonitorWindowsStayOnTop;
+        _monitorOpacityBox.Value = _settings.MonitorWindowOpacityPercent;
 
         _listenerEnabledBox.Checked = _settings.ListenerEnabled;
         _confirmKillsBox.Checked = _settings.ConfirmTaskKills;
@@ -1036,6 +1135,7 @@ internal sealed class MainForm : Form
         _listenerUserBox.Text = _settings.Username;
         _listenerPasswordBox.Text = _settings.GetPassword();
         ApplyBarSmoothingToControls();
+        ApplyMonitorWindowOptionsToOpenWindows();
         RefreshRemoteList();
     }
 
@@ -1092,6 +1192,43 @@ internal sealed class MainForm : Form
         foreach (var card in _hostCards.Values)
         {
             card.SmoothingDurationMs = _settings.BarSmoothingMs;
+        }
+
+        foreach (var window in _monitorWindows.Values)
+        {
+            if (_hostSnapshots.TryGetValue(window.HostId, out var snapshot))
+            {
+                window.UpdateSnapshot(snapshot, _settings.BarSmoothingMs);
+            }
+        }
+    }
+
+    private void ApplyMonitorWindowOptions(bool save)
+    {
+        var opacityPercent = Math.Clamp((int)_monitorOpacityBox.Value, 30, 100);
+        var changed = _settings.MonitorWindowsStayOnTop != _monitorTopMostBox.Checked
+            || _settings.MonitorWindowOpacityPercent != opacityPercent;
+
+        _settings.MonitorWindowsStayOnTop = _monitorTopMostBox.Checked;
+        _settings.MonitorWindowOpacityPercent = opacityPercent;
+        ApplyMonitorWindowOptionsToOpenWindows();
+
+        if (save && changed)
+        {
+            SettingsStore.Save(_settings);
+        }
+
+        if (_monitorOpacityBox.Value != opacityPercent)
+        {
+            _monitorOpacityBox.Value = opacityPercent;
+        }
+    }
+
+    private void ApplyMonitorWindowOptionsToOpenWindows()
+    {
+        foreach (var window in _monitorWindows.Values)
+        {
+            window.ApplyOptions(_settings.MonitorWindowsStayOnTop, _settings.MonitorWindowOpacityPercent);
         }
     }
 
@@ -1308,6 +1445,7 @@ internal sealed class MainForm : Form
         }
 
         UpdateHostCards();
+        UpdateMonitorWindows();
         RefreshSelectedHostView();
         UpdateListenerStatus();
         SetStatusText($"Live telemetry - {_settings.UpdateIntervalMs:N0} ms updates");
@@ -1405,6 +1543,17 @@ internal sealed class MainForm : Form
                     UpdateHostCards();
                     RefreshSelectedHostView(forceProcessRefresh: true);
                 };
+                card.DoubleClick += (_, _) => OpenHostMonitor(hostId);
+                card.MouseUp += (_, args) =>
+                {
+                    if (args.Button == MouseButtons.Right)
+                    {
+                        _selectedHostId = hostId;
+                        UpdateHostCards();
+                        RefreshSelectedHostView(forceProcessRefresh: true);
+                        OpenHostMonitor(hostId);
+                    }
+                };
                 _hostCards[snapshot.Id] = card;
             }
 
@@ -1432,6 +1581,75 @@ internal sealed class MainForm : Form
         _hostCardsPanel.ResumeLayout();
         _hostCardsPanel.HorizontalScroll.Enabled = false;
         _hostCardsPanel.HorizontalScroll.Visible = false;
+    }
+
+    private void OpenHostMonitor(Guid hostId)
+    {
+        if (!_hostSnapshots.TryGetValue(hostId, out var snapshot))
+        {
+            return;
+        }
+
+        if (_monitorWindows.TryGetValue(hostId, out var existing))
+        {
+            if (existing.IsDisposed)
+            {
+                _monitorWindows.Remove(hostId);
+            }
+            else
+            {
+                existing.UpdateSnapshot(snapshot, _settings.BarSmoothingMs);
+                existing.ApplyOptions(_settings.MonitorWindowsStayOnTop, _settings.MonitorWindowOpacityPercent);
+                if (existing.WindowState == FormWindowState.Minimized)
+                {
+                    existing.WindowState = FormWindowState.Normal;
+                }
+
+                existing.Show();
+                existing.Activate();
+                return;
+            }
+        }
+
+        var window = new HostMonitorForm(hostId, _appIcon);
+        window.FormClosed += (_, _) => _monitorWindows.Remove(hostId);
+        window.UpdateSnapshot(snapshot, _settings.BarSmoothingMs);
+        window.ApplyOptions(_settings.MonitorWindowsStayOnTop, _settings.MonitorWindowOpacityPercent);
+        PositionHostMonitorWindow(window);
+        _monitorWindows[hostId] = window;
+        window.Show();
+        window.Activate();
+    }
+
+    private void UpdateMonitorWindows()
+    {
+        foreach (var (hostId, window) in _monitorWindows.ToArray())
+        {
+            if (window.IsDisposed)
+            {
+                _monitorWindows.Remove(hostId);
+                continue;
+            }
+
+            if (_hostSnapshots.TryGetValue(hostId, out var snapshot))
+            {
+                window.UpdateSnapshot(snapshot, _settings.BarSmoothingMs);
+                window.ApplyOptions(_settings.MonitorWindowsStayOnTop, _settings.MonitorWindowOpacityPercent);
+            }
+            else
+            {
+                window.Close();
+                _monitorWindows.Remove(hostId);
+            }
+        }
+    }
+
+    private void PositionHostMonitorWindow(Form window)
+    {
+        var screen = Screen.FromPoint(Cursor.Position).WorkingArea;
+        var x = Math.Clamp(Cursor.Position.X + 18, screen.Left, Math.Max(screen.Left, screen.Right - window.Width));
+        var y = Math.Clamp(Cursor.Position.Y + 18, screen.Top, Math.Max(screen.Top, screen.Bottom - window.Height));
+        window.Location = new Point(x, y);
     }
 
     private void RefreshSelectedHostView(bool forceProcessRefresh = false)
@@ -1808,6 +2026,7 @@ internal sealed class MainForm : Form
         RefreshRemoteList();
         _hostListDirty = true;
         UpdateHostCards();
+        UpdateMonitorWindows();
         RefreshSelectedHostView(forceProcessRefresh: true);
     }
 
