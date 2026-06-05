@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build and publish Windows artifacts
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Resolve version
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = $tag.TrimStart("v")
+          "VRAM_VUE_TAG=$tag" >> $env:GITHUB_ENV
+          "VRAM_VUE_VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Install WiX CLI
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix
+          "$env:USERPROFILE\.dotnet\tools" >> $env:GITHUB_PATH
+
+      - name: Restore with NuGet audit
+        shell: pwsh
+        run: dotnet restore .\VramOp.csproj /p:NuGetAudit=true /p:NuGetAuditMode=all
+
+      - name: Check vulnerable packages
+        shell: pwsh
+        run: dotnet list .\VramOp.csproj package --vulnerable --include-transitive
+
+      - name: Check deprecated packages
+        shell: pwsh
+        run: dotnet list .\VramOp.csproj package --deprecated
+
+      - name: Build MSI and portable zip
+        shell: pwsh
+        run: .\scripts\Build-Msi.ps1 -Version $env:VRAM_VUE_VERSION
+
+      - name: Validate MSI
+        shell: pwsh
+        run: wix msi validate ".\dist\VRAMVue-Setup-v$env:VRAM_VUE_VERSION-win-x64.msi"
+
+      - name: Write release notes
+        shell: pwsh
+        run: |
+          $msi = "dist\VRAMVue-Setup-v$env:VRAM_VUE_VERSION-win-x64.msi"
+          $zip = "dist\VRAMVue-Portable-v$env:VRAM_VUE_VERSION-win-x64.zip"
+          $hashes = Get-FileHash -Algorithm SHA256 $msi, $zip
+          $msiHash = ($hashes | Where-Object Path -Like "*.msi").Hash
+          $zipHash = ($hashes | Where-Object Path -Like "*.zip").Hash
+
+          @"
+          # VRAM Vue $env:VRAM_VUE_TAG
+
+          Self-contained Windows x64 release artifacts.
+
+          ## Downloads
+
+          - ``VRAMVue-Setup-v$env:VRAM_VUE_VERSION-win-x64.msi``: installer for normal use.
+          - ``VRAMVue-Portable-v$env:VRAM_VUE_VERSION-win-x64.zip``: unzip-and-run build for machines where you do not want to install.
+
+          ## SHA-256
+
+          ```text
+          VRAMVue-Setup-v$env:VRAM_VUE_VERSION-win-x64.msi     $msiHash
+          VRAMVue-Portable-v$env:VRAM_VUE_VERSION-win-x64.zip  $zipHash
+          ```
+          "@ | Set-Content -Path release-notes.md -Encoding utf8
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $msi = "dist\VRAMVue-Setup-v$env:VRAM_VUE_VERSION-win-x64.msi"
+          $zip = "dist\VRAMVue-Portable-v$env:VRAM_VUE_VERSION-win-x64.zip"
+
+          gh release view $env:VRAM_VUE_TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release edit $env:VRAM_VUE_TAG --title "VRAM Vue $env:VRAM_VUE_TAG" --notes-file release-notes.md
+            gh release upload $env:VRAM_VUE_TAG $msi $zip --clobber
+          }
+          else {
+            gh release create $env:VRAM_VUE_TAG $msi $zip --title "VRAM Vue $env:VRAM_VUE_TAG" --notes-file release-notes.md --verify-tag
+          }

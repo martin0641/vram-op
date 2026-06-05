@@ -18,6 +18,10 @@ Author/contact: Martin / `martin0641@gmail.com`
 
 ## Download or Build Distribution Artifacts
 
+Tagged releases publish installer assets to the GitHub Releases page. For v6, download either the MSI or the portable zip:
+
+- [VRAM Vue releases](https://github.com/martin0641/vram-op/releases)
+
 The v6 installer built by this repo is:
 
 ```text
