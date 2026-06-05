@@ -16,6 +16,15 @@ Author/contact: Martin / `martin0641@gmail.com`
 - Self-contained win-x64 MSI installer, no separate .NET Desktop Runtime install required.
 - Tray icon behavior for long-running monitoring without Remote Desktop overhead.
 
+## Screenshots
+
+![VRAM Vue dashboard showing local and remote CPU, RAM, GPU, VRAM, spillover, and process telemetry](docs/images/dashboard.png)
+
+<p>
+  <img src="docs/images/popout-widget.png" alt="VRAM Vue detached monitor widget near the Windows taskbar" width="49%">
+  <img src="docs/images/popout-opacity.png" alt="VRAM Vue detached monitor widget with reduced opacity" width="49%">
+</p>
+
 ## Download or Build Distribution Artifacts
 
 Tagged releases publish installer assets to the GitHub Releases page. For v6, download either the MSI or the portable zip:
