@@ -10,9 +10,8 @@ internal sealed class SystemTelemetryCollector : IDisposable
     private readonly GpuProcessMemoryReader _gpuMemoryReader = new();
     private readonly GpuUtilizationReader _gpuUtilizationReader = new();
     private readonly NetworkUsageReader _networkUsageReader = new();
+    private readonly CpuUsageReader _cpuUsageReader = new();
     private readonly UsageSampler _usageSampler;
-    private readonly object _cpuCounterGate = new();
-    private readonly PerformanceCounter? _cpuCounter;
     private readonly List<GpuAdapterInfo> _adapters;
     private readonly string _hostId;
     private bool _disposed;
@@ -22,25 +21,15 @@ internal sealed class SystemTelemetryCollector : IDisposable
         _hostId = $"{Environment.MachineName}-{Environment.UserName}";
         _adapters = ReadGpuAdapters();
 
-        try
-        {
-            _cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total", readOnly: true);
-            _cpuCounter.NextValue();
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Win32Exception)
-        {
-            _cpuCounter = null;
-        }
-
         _usageSampler = new UsageSampler(ReadCpuPercent, _gpuUtilizationReader.ReadPercent);
     }
 
     public HostTelemetry Read(NetworkSelectionOverride? networkSelectionOverride = null)
     {
+        var averagedUsage = _usageSampler.ReadAverage();
         var gpuSnapshot = _gpuMemoryReader.Read();
         var restartIndex = ProcessRestartIndex.Read();
         var memory = ReadMemoryStatus();
-        var averagedUsage = _usageSampler.ReadAverage();
         var networkInterfaces = _networkUsageReader.Read(networkSelectionOverride);
         var topProcesses = gpuSnapshot.Rows
             .OrderByDescending(row => row.LocalBytes)
@@ -276,24 +265,11 @@ internal sealed class SystemTelemetryCollector : IDisposable
         _usageSampler.Dispose();
         _networkUsageReader.Dispose();
         _gpuUtilizationReader.Dispose();
-        _cpuCounter?.Dispose();
+        _cpuUsageReader.Dispose();
         _disposed = true;
     }
 
-    private double ReadCpuPercent()
-    {
-        try
-        {
-            lock (_cpuCounterGate)
-            {
-                return ClampPercent(_cpuCounter?.NextValue() ?? 0);
-            }
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Win32Exception)
-        {
-            return 0;
-        }
-    }
+    private double ReadCpuPercent() => _cpuUsageReader.ReadPercent();
 
     private static List<GpuAdapterInfo> ReadGpuAdapters()
     {
@@ -476,6 +452,13 @@ internal sealed class SystemTelemetryCollector : IDisposable
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetSystemTimes(
+        out FileTime lpIdleTime,
+        out FileTime lpKernelTime,
+        out FileTime lpUserTime);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GlobalMemoryStatusEx(ref MemoryStatusEx lpBuffer);
 
     private const int DXGI_ERROR_NOT_FOUND = unchecked((int)0x887A0002);
@@ -485,6 +468,13 @@ internal sealed class SystemTelemetryCollector : IDisposable
     private static extern int CreateDXGIFactory1(
         ref Guid riid,
         [MarshalAs(UnmanagedType.Interface)] out IDXGIFactory1? factory);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileTime
+    {
+        public uint LowDateTime;
+        public uint HighDateTime;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MemoryStatusEx
@@ -513,6 +503,7 @@ internal sealed class SystemTelemetryCollector : IDisposable
         private readonly object _gate = new();
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _sampleTask;
+        private UsageSample? _lastSample;
         private bool _disposed;
 
         public UsageSampler(Func<double> readCpuPercent, Func<double> readGpuPercent)
@@ -532,7 +523,7 @@ internal sealed class SystemTelemetryCollector : IDisposable
                 Prune(now);
 
                 return _samples.Count == 0
-                    ? new UsageSample(now, 0, 0)
+                    ? _lastSample ?? new UsageSample(now, 0, 0)
                     : new UsageSample(
                         now,
                         _samples.Average(sample => sample.CpuPercent),
@@ -587,6 +578,7 @@ internal sealed class SystemTelemetryCollector : IDisposable
 
             lock (_gate)
             {
+                _lastSample = sample;
                 _samples.Enqueue(sample);
                 Prune(now);
             }
@@ -618,6 +610,107 @@ internal sealed class SystemTelemetryCollector : IDisposable
         DateTimeOffset CapturedAt,
         double CpuPercent,
         double GpuPercent);
+
+    private sealed class CpuUsageReader : IDisposable
+    {
+        private readonly object _gate = new();
+        private readonly PerformanceCounter? _fallbackCounter;
+        private CpuTimes? _previous;
+        private bool _disposed;
+
+        public CpuUsageReader()
+        {
+            _previous = TryReadCpuTimes();
+
+            try
+            {
+                _fallbackCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total", readOnly: true);
+                _fallbackCounter.NextValue();
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Win32Exception)
+            {
+                _fallbackCounter = null;
+            }
+        }
+
+        public double ReadPercent()
+        {
+            lock (_gate)
+            {
+                if (_disposed)
+                {
+                    return 0;
+                }
+
+                var current = TryReadCpuTimes();
+                if (current is not null)
+                {
+                    if (_previous is { } previous)
+                    {
+                        _previous = current;
+                        if (current.Value.Idle >= previous.Idle
+                            && current.Value.Kernel >= previous.Kernel
+                            && current.Value.User >= previous.User)
+                        {
+                            var idleDelta = current.Value.Idle - previous.Idle;
+                            var kernelDelta = current.Value.Kernel - previous.Kernel;
+                            var userDelta = current.Value.User - previous.User;
+                            var totalDelta = kernelDelta + userDelta;
+
+                            if (totalDelta > 0 && idleDelta <= totalDelta)
+                            {
+                                return ClampPercent((totalDelta - idleDelta) * 100D / totalDelta);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        _previous = current;
+                    }
+                }
+
+                return ReadFallbackCounter();
+            }
+        }
+
+        public void Dispose()
+        {
+            lock (_gate)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _fallbackCounter?.Dispose();
+                _disposed = true;
+            }
+        }
+
+        private double ReadFallbackCounter()
+        {
+            try
+            {
+                return ClampPercent(_fallbackCounter?.NextValue() ?? 0);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Win32Exception)
+            {
+                return 0;
+            }
+        }
+
+        private static CpuTimes? TryReadCpuTimes()
+        {
+            return GetSystemTimes(out var idle, out var kernel, out var user)
+                ? new CpuTimes(ToUInt64(idle), ToUInt64(kernel), ToUInt64(user))
+                : null;
+        }
+
+        private static ulong ToUInt64(FileTime value) =>
+            ((ulong)value.HighDateTime << 32) | value.LowDateTime;
+    }
+
+    private readonly record struct CpuTimes(ulong Idle, ulong Kernel, ulong User);
 
     private sealed class GpuUtilizationReader : IDisposable
     {

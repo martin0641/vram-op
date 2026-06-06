@@ -41,7 +41,18 @@ internal static class Formatters
             : $"{value:N0} {units[unitIndex]}";
     }
 
-    public static string Percent(double value) => $"{Math.Round(value):N0}%";
+    public static string Percent(double value)
+    {
+        value = Math.Clamp(value, 0, 100);
+        if (value < 0.05)
+        {
+            return "0%";
+        }
+
+        return value < 10
+            ? $"{value:N1}%"
+            : $"{value:N0}%";
+    }
 
     public static double Ratio(long used, long total) =>
         total <= 0 ? 0 : Math.Min(1, Math.Max(0, used / (double)total));
