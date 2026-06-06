@@ -57,6 +57,8 @@ internal sealed class RemoteHostConfig
     public string Username { get; set; } = "vram";
     public string ProtectedPassword { get; set; } = string.Empty;
     public string TrustedCertificateThumbprint { get; set; } = string.Empty;
+    public NetworkSelectionMode NetworkSelectionMode { get; set; } = NetworkSelectionMode.Auto;
+    public List<string> TrackedNetworkInterfaceIds { get; set; } = [];
 
     public string DisplayName => string.IsNullOrWhiteSpace(Name) ? Host : Name;
     public string BaseUrl => $"https://{Host}:{Port}";

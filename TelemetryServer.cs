@@ -79,7 +79,8 @@ internal sealed class TelemetryServer : IAsyncDisposable
             await next();
         });
 
-        app.MapGet("/api/telemetry", () => Results.Json(_collector.Read()));
+        app.MapGet("/api/telemetry", (HttpRequest request) => Results.Json(_collector.Read(ReadNetworkSelectionOverride(request))));
+        app.MapGet("/api/network/interfaces", () => Results.Json(NetworkUsageReader.GetAvailableInterfaces()));
         app.MapPost("/api/processes/{processId:int}/kill", (int processId) => Results.Json(_collector.KillProcess(processId)));
         app.MapPost("/api/processes/{processId:int}/kill-parent", (int processId) => Results.Json(_collector.KillParentProcess(processId)));
         app.MapPost("/api/services/{serviceName}/start", (string serviceName) => Results.Json(_collector.ControlService(serviceName, ServiceControlAction.Start)));
@@ -156,6 +157,24 @@ internal sealed class TelemetryServer : IAsyncDisposable
         {
             return false;
         }
+    }
+
+    private static NetworkSelectionOverride? ReadNetworkSelectionOverride(HttpRequest request)
+    {
+        if (!request.Query.TryGetValue("networkMode", out var rawMode)
+            || !Enum.TryParse<NetworkSelectionMode>(rawMode.FirstOrDefault(), ignoreCase: true, out var mode))
+        {
+            return null;
+        }
+
+        var ids = request.Query["nic"]
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(4)
+            .ToArray();
+
+        return new NetworkSelectionOverride(mode, ids);
     }
 
     private static bool FixedTimeEquals(string left, string right)

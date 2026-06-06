@@ -18,7 +18,7 @@ internal sealed class RemoteTelemetryClient
         string? observedThumbprint = null;
 
         using var client = CreateClient(host, thumbprint => observedThumbprint = thumbprint);
-        using var response = await client.GetAsync($"{host.BaseUrl}/api/telemetry", cancellationToken);
+        using var response = await client.GetAsync(BuildTelemetryUrl(host), cancellationToken);
 
         if (response.StatusCode == HttpStatusCode.Unauthorized)
         {
@@ -36,6 +36,22 @@ internal sealed class RemoteTelemetryClient
         }
 
         return RemoteTelemetryResult.Succeeded(telemetry, observedThumbprint);
+    }
+
+    public async Task<IReadOnlyList<NetworkInterfaceOption>> ReadNetworkInterfacesAsync(RemoteHostConfig host, CancellationToken cancellationToken)
+    {
+        using var client = CreateClient(host, _ => { });
+        using var response = await client.GetAsync($"{host.BaseUrl}/api/network/interfaces", cancellationToken);
+
+        if (response.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            return [];
+        }
+
+        response.EnsureSuccessStatusCode();
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        return await JsonSerializer.DeserializeAsync<IReadOnlyList<NetworkInterfaceOption>>(stream, SerializerOptions, cancellationToken)
+            ?? [];
     }
 
     public async Task<KillProcessResponse> KillProcessAsync(RemoteHostConfig host, int processId, CancellationToken cancellationToken)
@@ -118,6 +134,21 @@ internal sealed class RemoteTelemetryClient
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", encodedCredentials);
         client.DefaultRequestHeaders.UserAgent.ParseAdd("VRAM-Vue/1.0");
         return client;
+    }
+
+    private static string BuildTelemetryUrl(RemoteHostConfig host)
+    {
+        var builder = new StringBuilder($"{host.BaseUrl}/api/telemetry?networkMode={host.NetworkSelectionMode}");
+        foreach (var id in (host.TrackedNetworkInterfaceIds ?? [])
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(4))
+        {
+            builder.Append("&nic=");
+            builder.Append(Uri.EscapeDataString(id));
+        }
+
+        return builder.ToString();
     }
 
     private static string NormalizeThumbprint(string value) =>

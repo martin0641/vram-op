@@ -24,7 +24,7 @@ internal sealed class NetworkUsageReader : IDisposable
         }
     }
 
-    public IReadOnlyList<NetworkInterfaceTelemetry> Read()
+    public IReadOnlyList<NetworkInterfaceTelemetry> Read(NetworkSelectionOverride? selectionOverride = null)
     {
         lock (_gate)
         {
@@ -35,7 +35,9 @@ internal sealed class NetworkUsageReader : IDisposable
 
             var now = DateTimeOffset.UtcNow;
             var snapshots = ReadInterfaceSnapshots(now);
-            var selected = SelectInterfaces(snapshots)
+            var mode = selectionOverride?.Mode ?? _selectionMode;
+            var selectedIds = selectionOverride?.InterfaceIds ?? _selectedIds;
+            var selected = SelectInterfaces(snapshots, mode, selectedIds)
                 .Take(4)
                 .Select((snapshot, index) => snapshot.ToTelemetry($"NIC{index + 1}"))
                 .ToArray();
@@ -119,11 +121,14 @@ internal sealed class NetworkUsageReader : IDisposable
         return snapshots;
     }
 
-    private IEnumerable<InterfaceRateSnapshot> SelectInterfaces(IReadOnlyList<InterfaceRateSnapshot> snapshots)
+    private IEnumerable<InterfaceRateSnapshot> SelectInterfaces(
+        IReadOnlyList<InterfaceRateSnapshot> snapshots,
+        NetworkSelectionMode selectionMode,
+        IReadOnlyList<string> selectedIds)
     {
-        if (_selectionMode == NetworkSelectionMode.Manual)
+        if (selectionMode == NetworkSelectionMode.Manual)
         {
-            foreach (var id in _selectedIds)
+            foreach (var id in selectedIds)
             {
                 var match = snapshots.FirstOrDefault(item => string.Equals(item.Id, id, StringComparison.OrdinalIgnoreCase));
                 if (match is not null)
@@ -206,3 +211,7 @@ internal sealed record NetworkInterfaceOption(
         }
     }
 }
+
+internal sealed record NetworkSelectionOverride(
+    NetworkSelectionMode Mode,
+    IReadOnlyList<string> InterfaceIds);

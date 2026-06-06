@@ -232,6 +232,8 @@ internal static class SettingsPackage
         public string Username { get; set; } = "vram";
         public string Password { get; set; } = string.Empty;
         public string TrustedCertificateThumbprint { get; set; } = string.Empty;
+        public NetworkSelectionMode NetworkSelectionMode { get; set; } = NetworkSelectionMode.Auto;
+        public List<string> TrackedNetworkInterfaceIds { get; set; } = [];
 
         public static PortableRemoteHost From(RemoteHostConfig remote) =>
             new()
@@ -242,7 +244,9 @@ internal static class SettingsPackage
                 Port = remote.Port,
                 Username = remote.Username,
                 Password = remote.GetPassword(),
-                TrustedCertificateThumbprint = remote.TrustedCertificateThumbprint
+                TrustedCertificateThumbprint = remote.TrustedCertificateThumbprint,
+                NetworkSelectionMode = remote.NetworkSelectionMode,
+                TrackedNetworkInterfaceIds = remote.TrackedNetworkInterfaceIds?.ToList() ?? []
             };
 
         public RemoteHostConfig ToRemoteHostConfig()
@@ -254,7 +258,9 @@ internal static class SettingsPackage
                 Host = Host,
                 Port = Port,
                 Username = Username,
-                TrustedCertificateThumbprint = TrustedCertificateThumbprint
+                TrustedCertificateThumbprint = TrustedCertificateThumbprint,
+                NetworkSelectionMode = NetworkSelectionMode,
+                TrackedNetworkInterfaceIds = TrackedNetworkInterfaceIds ?? []
             };
             remote.SetPassword(Password);
             return remote;

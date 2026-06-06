@@ -79,6 +79,12 @@ internal sealed class MainForm : Form
     private readonly ComboBox[] _networkInterfaceBoxes = Enumerable.Range(0, MaxNetworkInterfaces)
         .Select(_ => new ComboBox())
         .ToArray();
+    private readonly CheckBox _selectedHostNetworkAutoBox = new();
+    private readonly ComboBox[] _selectedHostNetworkInterfaceBoxes = Enumerable.Range(0, MaxNetworkInterfaces)
+        .Select(_ => new ComboBox())
+        .ToArray();
+    private readonly Label _selectedHostNetworkStatusLabel = new BufferedLabel();
+    private readonly Dictionary<Guid, IReadOnlyList<NetworkInterfaceOption>> _remoteNetworkOptions = [];
 
     private Guid _localHostId = Guid.Empty;
     private Guid? _selectedHostId;
@@ -91,6 +97,7 @@ internal sealed class MainForm : Form
     private int _openContextMenuCount;
     private bool _updatingProcessRows;
     private bool _loadingSettingsControls;
+    private bool _loadingSelectedHostNetworkControls;
     private Guid? _lastRenderedProcessHostId;
     private string _lastRenderedProcessSignature = string.Empty;
     private string _lastStatusText = string.Empty;
@@ -106,6 +113,11 @@ internal sealed class MainForm : Form
         _settings.RemoteHosts ??= [];
         _settings.ThemeColors ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         _settings.TrackedNetworkInterfaceIds ??= [];
+        foreach (var remote in _settings.RemoteHosts)
+        {
+            remote.TrackedNetworkInterfaceIds ??= [];
+        }
+
         _settings.AverageWindowMinutes = Math.Clamp(_settings.AverageWindowMinutes, 1, MaxAverageWindowMinutes);
         _collector.ApplySettings(_settings);
         AppTheme.Apply(_settings.ThemeColors);
@@ -690,9 +702,35 @@ internal sealed class MainForm : Form
         _settingsContent.Controls.Add(BuildRemoteSettings(), 1, 0);
         _settingsContent.Controls.Add(BuildMonitorAndTransferSettings(), 0, 1);
         _settingsContent.Controls.Add(BuildNetworkSettings(), 1, 1);
-        _settingsContent.Controls.Add(BuildThemeSettings(), 1, 2);
+        var lowerSettings = BuildThemeAndSelectedHostNetworkSettings();
+        _settingsContent.Controls.Add(lowerSettings, 0, 2);
+        _settingsContent.SetColumnSpan(lowerSettings, 2);
         scroll.Controls.Add(_settingsContent);
         _settingsPage.Controls.Add(scroll);
+    }
+
+    private Control BuildThemeAndSelectedHostNetworkSettings()
+    {
+        var row = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            ColumnCount = 2,
+            RowCount = 1,
+            Margin = new Padding(0, 12, 0, 0),
+            BackColor = AppTheme.Background
+        };
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        row.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+        var theme = BuildThemeSettings();
+        var hostNetwork = BuildSelectedHostNetworkSettings();
+        theme.Margin = new Padding(0, 0, 6, 0);
+        hostNetwork.Margin = new Padding(6, 0, 0, 0);
+        row.Controls.Add(theme, 0, 0);
+        row.Controls.Add(hostNetwork, 1, 0);
+        return row;
     }
 
     private Control BuildMonitorAndTransferSettings()
@@ -706,8 +744,8 @@ internal sealed class MainForm : Form
             Margin = new Padding(0, 12, 12, 0),
             BackColor = AppTheme.Background
         };
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
         row.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         var monitor = BuildMonitorSettings();
@@ -797,7 +835,7 @@ internal sealed class MainForm : Form
             BackColor = AppTheme.Surface,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            MinimumSize = new Size(0, 0)
+            MinimumSize = new Size(0, 210)
         };
 
         var layout = CreateSettingsLayout();
@@ -829,7 +867,7 @@ internal sealed class MainForm : Form
             BackColor = AppTheme.Surface,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            MinimumSize = new Size(0, 0)
+            MinimumSize = new Size(0, 210)
         };
 
         var layout = CreateSettingsLayout();
@@ -891,7 +929,8 @@ internal sealed class MainForm : Form
         _themeSwatchesPanel.FlowDirection = FlowDirection.LeftToRight;
         _themeSwatchesPanel.WrapContents = true;
         _themeSwatchesPanel.AutoScroll = false;
-        _themeSwatchesPanel.MinimumSize = new Size(0, 48);
+        _themeSwatchesPanel.MinimumSize = new Size(280, 96);
+        _themeSwatchesPanel.MaximumSize = new Size(360, 0);
         _themeSwatchesPanel.Padding = new Padding(0, 4, 0, 0);
         _themeSwatchesPanel.BackColor = AppTheme.Surface;
 
@@ -899,8 +938,76 @@ internal sealed class MainForm : Form
         layout.Controls.Add(_themeSwatchesPanel, 0, 1);
         layout.SetColumnSpan(_themeSwatchesPanel, 2);
 
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false,
+            BackColor = AppTheme.Surface
+        };
+        var resetButton = new RoundedButton { Text = "Reset defaults", Width = 138 };
+        resetButton.Click += (_, _) => ResetThemeColors();
+        buttons.Controls.Add(resetButton);
+        SetSettingsRowHeight(layout, 2, ButtonRowHeight(resetButton));
+        layout.Controls.Add(buttons, 0, 2);
+        layout.SetColumnSpan(buttons, 2);
+
         panel.Controls.Add(layout);
         RefreshThemeSwatches();
+        return panel;
+    }
+
+    private Control BuildSelectedHostNetworkSettings()
+    {
+        var panel = new RoundedPanel
+        {
+            Dock = DockStyle.Top,
+            BackColor = AppTheme.Surface,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(0, 210)
+        };
+
+        var layout = CreateSettingsLayout();
+        AddSectionTitle(layout, "Selected host NICs", 0);
+
+        _selectedHostNetworkStatusLabel.Dock = DockStyle.Fill;
+        _selectedHostNetworkStatusLabel.ForeColor = AppTheme.MutedText;
+        _selectedHostNetworkStatusLabel.TextAlign = ContentAlignment.MiddleLeft;
+        SetSettingsRowHeight(layout, 1, Math.Max(34, _selectedHostNetworkStatusLabel.Font.Height + 14));
+        layout.Controls.Add(_selectedHostNetworkStatusLabel, 0, 1);
+        layout.SetColumnSpan(_selectedHostNetworkStatusLabel, 2);
+
+        _selectedHostNetworkAutoBox.Text = "Auto detect active NICs";
+        _selectedHostNetworkAutoBox.ForeColor = AppTheme.Text;
+        _selectedHostNetworkAutoBox.AutoSize = true;
+        SetSettingsRowHeight(layout, 2, CheckBoxRowHeight(_selectedHostNetworkAutoBox));
+        layout.Controls.Add(_selectedHostNetworkAutoBox, 0, 2);
+        layout.SetColumnSpan(_selectedHostNetworkAutoBox, 2);
+
+        for (var index = 0; index < _selectedHostNetworkInterfaceBoxes.Length; index++)
+        {
+            var comboBox = _selectedHostNetworkInterfaceBoxes[index];
+            ConfigureSettingsComboBox(comboBox);
+            AddLabeledControl(layout, $"NIC{index + 1}", comboBox, 3 + index);
+        }
+
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false,
+            BackColor = AppTheme.Surface
+        };
+        var refreshButton = new RoundedButton { Text = "Refresh NICs", Width = 122 };
+        refreshButton.Click += async (_, _) => await RefreshSelectedRemoteNetworkInterfacesAsync();
+        buttons.Controls.Add(refreshButton);
+        SetSettingsRowHeight(layout, 7, ButtonRowHeight(refreshButton));
+        layout.Controls.Add(buttons, 0, 7);
+        layout.SetColumnSpan(buttons, 2);
+
+        panel.Controls.Add(layout);
+        PopulateSelectedHostNetworkSelectors();
         return panel;
     }
 
@@ -1294,10 +1401,10 @@ internal sealed class MainForm : Form
     private static int SettingsInputHeight(Control control) =>
         control switch
         {
-            TextBox textBox => Math.Max(textBox.Font.Height + 16, 34),
-            NumericUpDown numeric => Math.Max(numeric.Font.Height + 18, 36),
-            ComboBox comboBox => Math.Max(comboBox.Font.Height + 18, 36),
-            _ => Math.Max(control.MinimumSize.Height, Math.Max(control.Font.Height + 16, 36))
+            TextBox textBox => Math.Max(textBox.PreferredHeight, textBox.Font.Height + 8),
+            NumericUpDown numeric => Math.Max(numeric.PreferredSize.Height, numeric.Font.Height + 10),
+            ComboBox comboBox => Math.Max(comboBox.PreferredSize.Height, comboBox.Font.Height + 10),
+            _ => Math.Max(control.MinimumSize.Height, Math.Max(control.Font.Height + 12, 32))
         };
 
     private static int CheckBoxRowHeight(CheckBox checkBox) =>
@@ -1433,6 +1540,23 @@ internal sealed class MainForm : Form
                 }
             };
         }
+        _selectedHostNetworkAutoBox.CheckedChanged += (_, _) =>
+        {
+            if (!_loadingSelectedHostNetworkControls)
+            {
+                ApplySelectedHostNetworkSettings(save: true);
+            }
+        };
+        foreach (var comboBox in _selectedHostNetworkInterfaceBoxes)
+        {
+            comboBox.SelectedIndexChanged += (_, _) =>
+            {
+                if (!_loadingSelectedHostNetworkControls)
+                {
+                    ApplySelectedHostNetworkSettings(save: true);
+                }
+            };
+        }
 
         _killButton.Click += async (_, _) => await KillSelectedProcessAsync();
         _killParentButton.Click += async (_, _) => await KillSelectedParentProcessAsync();
@@ -1484,6 +1608,7 @@ internal sealed class MainForm : Form
         ApplyMonitorWindowOptionsToOpenWindows();
         ApplyNetworkSettings(save: false);
         RefreshRemoteList();
+        PopulateSelectedHostNetworkSelectors();
         RefreshThemeSwatches();
     }
 
@@ -1671,6 +1796,158 @@ internal sealed class MainForm : Form
         }
     }
 
+    private RemoteHostConfig? SelectedRemoteHost() =>
+        _selectedRemoteHostId is null
+            ? null
+            : _settings.RemoteHosts.FirstOrDefault(item => item.Id == _selectedRemoteHostId.Value);
+
+    private void PopulateSelectedHostNetworkSelectors()
+    {
+        if (_selectedHostNetworkStatusLabel.IsDisposed)
+        {
+            return;
+        }
+
+        var remote = SelectedRemoteHost();
+        var enabled = remote is not null;
+        var selectedIds = remote?.TrackedNetworkInterfaceIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Take(MaxNetworkInterfaces)
+            .ToArray()
+            ?? Array.Empty<string>();
+        IReadOnlyList<NetworkInterfaceOption> options = remote is null
+            ? Array.Empty<NetworkInterfaceOption>()
+            : GetSelectedHostNetworkOptions(remote);
+        var mode = remote?.NetworkSelectionMode ?? NetworkSelectionMode.Auto;
+
+        _loadingSelectedHostNetworkControls = true;
+        try
+        {
+            _selectedHostNetworkStatusLabel.Text = remote is null
+                ? "No remote host selected"
+                : remote.DisplayName;
+            _selectedHostNetworkAutoBox.Enabled = enabled;
+            _selectedHostNetworkAutoBox.Checked = mode == NetworkSelectionMode.Auto;
+
+            for (var index = 0; index < _selectedHostNetworkInterfaceBoxes.Length; index++)
+            {
+                var comboBox = _selectedHostNetworkInterfaceBoxes[index];
+                comboBox.BeginUpdate();
+                comboBox.Items.Clear();
+                comboBox.Items.Add(NetworkInterfaceSelectionItem.None);
+                foreach (var option in options)
+                {
+                    comboBox.Items.Add(new NetworkInterfaceSelectionItem(option));
+                }
+
+                var desiredId = index < selectedIds.Length ? selectedIds[index] : string.Empty;
+                if (!string.IsNullOrWhiteSpace(desiredId)
+                    && !comboBox.Items
+                        .Cast<NetworkInterfaceSelectionItem>()
+                        .Any(item => string.Equals(item.Id, desiredId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    comboBox.Items.Add(NetworkInterfaceSelectionItem.FromUnknownId(desiredId));
+                }
+
+                comboBox.SelectedItem = comboBox.Items
+                    .Cast<NetworkInterfaceSelectionItem>()
+                    .FirstOrDefault(item => string.Equals(item.Id, desiredId, StringComparison.OrdinalIgnoreCase))
+                    ?? NetworkInterfaceSelectionItem.None;
+                comboBox.Enabled = enabled && mode == NetworkSelectionMode.Manual;
+                comboBox.EndUpdate();
+            }
+        }
+        finally
+        {
+            _loadingSelectedHostNetworkControls = false;
+        }
+    }
+
+    private IReadOnlyList<NetworkInterfaceOption> GetSelectedHostNetworkOptions(RemoteHostConfig remote)
+    {
+        if (_remoteNetworkOptions.TryGetValue(remote.Id, out var cached))
+        {
+            return cached;
+        }
+
+        if (_hostSnapshots.TryGetValue(remote.Id, out var snapshot)
+            && snapshot.NetworkInterfaces.Count > 0)
+        {
+            return snapshot.NetworkInterfaces
+                .Select(item => new NetworkInterfaceOption(
+                    item.Id,
+                    item.Name,
+                    item.Description,
+                    "Observed",
+                    item.LinkSpeedBitsPerSecond))
+                .ToArray();
+        }
+
+        return [];
+    }
+
+    private void ApplySelectedHostNetworkSettings(bool save)
+    {
+        var remote = SelectedRemoteHost();
+        if (remote is null)
+        {
+            PopulateSelectedHostNetworkSelectors();
+            return;
+        }
+
+        var selectedIds = _selectedHostNetworkInterfaceBoxes
+            .Select(comboBox => comboBox.SelectedItem)
+            .OfType<NetworkInterfaceSelectionItem>()
+            .Select(item => item.Id)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(MaxNetworkInterfaces)
+            .ToList();
+        var mode = _selectedHostNetworkAutoBox.Checked ? NetworkSelectionMode.Auto : NetworkSelectionMode.Manual;
+        var changed = remote.NetworkSelectionMode != mode
+            || !remote.TrackedNetworkInterfaceIds.SequenceEqual(selectedIds, StringComparer.OrdinalIgnoreCase);
+
+        remote.NetworkSelectionMode = mode;
+        remote.TrackedNetworkInterfaceIds = selectedIds;
+
+        foreach (var comboBox in _selectedHostNetworkInterfaceBoxes)
+        {
+            comboBox.Enabled = mode == NetworkSelectionMode.Manual;
+        }
+
+        if (save && changed)
+        {
+            SettingsStore.Save(_settings);
+        }
+    }
+
+    private async Task RefreshSelectedRemoteNetworkInterfacesAsync()
+    {
+        var remote = SelectedRemoteHost();
+        if (remote is null)
+        {
+            PopulateSelectedHostNetworkSelectors();
+            return;
+        }
+
+        _selectedHostNetworkStatusLabel.Text = $"{remote.DisplayName} - refreshing NICs";
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var options = await _remoteClient.ReadNetworkInterfacesAsync(remote, cts.Token);
+            _remoteNetworkOptions[remote.Id] = options;
+            PopulateSelectedHostNetworkSelectors();
+            _selectedHostNetworkStatusLabel.Text = options.Count == 0
+                ? $"{remote.DisplayName} - no NICs returned"
+                : $"{remote.DisplayName} - {options.Count} NICs";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or AuthenticationException)
+        {
+            _selectedHostNetworkStatusLabel.Text = $"{remote.DisplayName} - NIC refresh failed";
+            _toolTip.SetToolTip(_selectedHostNetworkStatusLabel, ex.Message);
+        }
+    }
+
     private void ExportSettings()
     {
         var password = InputRules.NormalizePassword(_settingsTransferPasswordBox.Text);
@@ -1767,7 +2044,13 @@ internal sealed class MainForm : Form
         _settings.AverageWindowMinutes = Math.Clamp(imported.AverageWindowMinutes, 1, MaxAverageWindowMinutes);
         _settings.ThemeColors = new Dictionary<string, string>(imported.ThemeColors, StringComparer.OrdinalIgnoreCase);
         _settings.RemoteHosts = imported.RemoteHosts;
+        foreach (var remote in _settings.RemoteHosts)
+        {
+            remote.TrackedNetworkInterfaceIds ??= [];
+        }
+
         _selectedRemoteHostId = null;
+        _remoteNetworkOptions.Clear();
     }
 
     private void RefreshThemeSwatches()
@@ -1779,8 +2062,9 @@ internal sealed class MainForm : Form
 
         _themeSwatchesPanel.SuspendLayout();
         _themeSwatchesPanel.Controls.Clear();
-        foreach (var slot in AppTheme.ColorSlots)
+        for (var index = 0; index < AppTheme.ColorSlots.Count; index++)
         {
+            var slot = AppTheme.ColorSlots[index];
             var swatch = new ColorSwatchButton
             {
                 SwatchColor = AppTheme.GetColor(slot.Key),
@@ -1793,9 +2077,20 @@ internal sealed class MainForm : Form
             _toolTip.SetToolTip(swatch, $"{slot.Label}: {AppTheme.ToHex(AppTheme.GetColor(slot.Key))}");
             swatch.Click += (_, _) => ChooseThemeColor(slot);
             _themeSwatchesPanel.Controls.Add(swatch);
+            _themeSwatchesPanel.SetFlowBreak(swatch, index == 4);
         }
 
         _themeSwatchesPanel.ResumeLayout();
+    }
+
+    private void ResetThemeColors()
+    {
+        _settings.ThemeColors.Clear();
+        AppTheme.Apply(_settings.ThemeColors);
+        SettingsStore.Save(_settings);
+        ApplyThemePaletteToStaticControls();
+        ApplyThemeToOpenSurfaces();
+        RefreshThemeSwatches();
     }
 
     private void ChooseThemeColor(ThemeColorSlot slot)
@@ -2126,6 +2421,10 @@ internal sealed class MainForm : Form
                     LastSeen = result.Telemetry.CapturedAt,
                     TrustedCertificateThumbprint = remote.TrustedCertificateThumbprint
                 };
+                if (CacheObservedNetworkOptions(remote.Id, result.Telemetry.NetworkInterfaces))
+                {
+                    PopulateSelectedHostNetworkSelectors();
+                }
             }
             else
             {
@@ -2149,6 +2448,24 @@ internal sealed class MainForm : Form
         RefreshSelectedHostView();
         UpdateListenerStatus();
         SetStatusText($"Live telemetry - {_settings.UpdateIntervalMs:N0} ms updates");
+    }
+
+    private bool CacheObservedNetworkOptions(Guid remoteId, IReadOnlyList<NetworkInterfaceTelemetry> networkInterfaces)
+    {
+        if (networkInterfaces.Count == 0 || _remoteNetworkOptions.ContainsKey(remoteId))
+        {
+            return false;
+        }
+
+        _remoteNetworkOptions[remoteId] = networkInterfaces
+            .Select(item => new NetworkInterfaceOption(
+                item.Id,
+                item.Name,
+                item.Description,
+                "Observed",
+                item.LinkSpeedBitsPerSecond))
+            .ToArray();
+        return true;
     }
 
     private void RefreshLocalHost(HostTelemetry telemetry)
@@ -2857,6 +3174,7 @@ internal sealed class MainForm : Form
         _settings.RemoteHosts.RemoveAll(item => item.Id == remote.Id);
         _hostSnapshots.Remove(remote.Id);
         _hostMetricHistories.Remove(remote.Id);
+        _remoteNetworkOptions.Remove(remote.Id);
         _selectedRemoteHostId = null;
         SettingsStore.Save(_settings);
         RefreshRemoteList();
@@ -2873,9 +3191,17 @@ internal sealed class MainForm : Form
             _selectedRemoteHostId = null;
         }
 
+        var orderedRemotes = _settings.RemoteHosts
+            .OrderBy(item => item.DisplayName)
+            .ToArray();
+        if (_selectedRemoteHostId is null && orderedRemotes.Length > 0)
+        {
+            _selectedRemoteHostId = orderedRemotes[0].Id;
+        }
+
         _remotePillsPanel.SuspendLayout();
         _remotePillsPanel.Controls.Clear();
-        foreach (var remote in _settings.RemoteHosts.OrderBy(item => item.DisplayName))
+        foreach (var remote in orderedRemotes)
         {
             var isSelected = remote.Id == _selectedRemoteHostId;
             var button = new RoundedButton
@@ -2895,12 +3221,14 @@ internal sealed class MainForm : Form
             {
                 _selectedRemoteHostId = remote.Id;
                 RefreshRemoteList();
+                PopulateSelectedHostNetworkSelectors();
             };
             _remotePillsPanel.Controls.Add(button);
         }
 
         _remotePillsPanel.ResumeLayout();
         PopulateRemoteEditorFromSelection();
+        PopulateSelectedHostNetworkSelectors();
     }
 
     private void PopulateRemoteEditorFromSelection()
@@ -3244,6 +3572,9 @@ internal sealed class MainForm : Form
     {
         public static NetworkInterfaceSelectionItem None { get; } = new(string.Empty, "(None)");
 
+        public static NetworkInterfaceSelectionItem FromUnknownId(string id) =>
+            new(id, $"Saved NIC ({ShortId(id)})");
+
         private readonly string _displayName;
 
         private NetworkInterfaceSelectionItem(string id, string displayName)
@@ -3260,5 +3591,8 @@ internal sealed class MainForm : Form
         public string Id { get; }
 
         public override string ToString() => _displayName;
+
+        private static string ShortId(string id) =>
+            id.Length <= 8 ? id : id[..8];
     }
 }

@@ -35,13 +35,13 @@ internal sealed class SystemTelemetryCollector : IDisposable
         _usageSampler = new UsageSampler(ReadCpuPercent, _gpuUtilizationReader.ReadPercent);
     }
 
-    public HostTelemetry Read()
+    public HostTelemetry Read(NetworkSelectionOverride? networkSelectionOverride = null)
     {
         var gpuSnapshot = _gpuMemoryReader.Read();
         var restartIndex = ProcessRestartIndex.Read();
         var memory = ReadMemoryStatus();
         var averagedUsage = _usageSampler.ReadAverage();
-        var networkInterfaces = _networkUsageReader.Read();
+        var networkInterfaces = _networkUsageReader.Read(networkSelectionOverride);
         var topProcesses = gpuSnapshot.Rows
             .OrderByDescending(row => row.LocalBytes)
             .ThenByDescending(row => row.DedicatedBytes)

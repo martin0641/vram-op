@@ -15,7 +15,9 @@ internal static class AppTheme
         new("Accent", "CPU/accent", Color.FromArgb(88, 166, 255)),
         new("Good", "RAM", Color.FromArgb(69, 214, 136)),
         new("Warning", "GPU", Color.FromArgb(255, 197, 92)),
-        new("Danger", "VRAM", Color.FromArgb(255, 107, 107))
+        new("Danger", "VRAM", Color.FromArgb(255, 107, 107)),
+        new("NetworkReceive", "Net receive", Color.FromArgb(94, 211, 243)),
+        new("NetworkSend", "Net send", Color.FromArgb(199, 125, 255))
     ];
 
     public static Color Background { get; private set; } = GetDefaultColor("Background");
@@ -28,6 +30,8 @@ internal static class AppTheme
     public static Color Good { get; private set; } = GetDefaultColor("Good");
     public static Color Warning { get; private set; } = GetDefaultColor("Warning");
     public static Color Danger { get; private set; } = GetDefaultColor("Danger");
+    public static Color NetworkReceive { get; private set; } = GetDefaultColor("NetworkReceive");
+    public static Color NetworkSend { get; private set; } = GetDefaultColor("NetworkSend");
 
     public static void Apply(IReadOnlyDictionary<string, string>? colors)
     {
@@ -75,6 +79,12 @@ internal static class AppTheme
             case "Danger":
                 Danger = color;
                 break;
+            case "NetworkReceive":
+                NetworkReceive = color;
+                break;
+            case "NetworkSend":
+                NetworkSend = color;
+                break;
         }
 
         Border = Mix(SurfaceRaised, Text, 0.16);
@@ -92,6 +102,8 @@ internal static class AppTheme
             "Good" => Good,
             "Warning" => Warning,
             "Danger" => Danger,
+            "NetworkReceive" => NetworkReceive,
+            "NetworkSend" => NetworkSend,
             _ => GetDefaultColor(key)
         };
 
@@ -107,6 +119,8 @@ internal static class AppTheme
         Good = GetDefaultColor("Good");
         Warning = GetDefaultColor("Warning");
         Danger = GetDefaultColor("Danger");
+        NetworkReceive = GetDefaultColor("NetworkReceive");
+        NetworkSend = GetDefaultColor("NetworkSend");
         Border = Color.FromArgb(48, 56, 70);
         MutedText = Color.FromArgb(145, 156, 172);
     }
@@ -1157,7 +1171,7 @@ internal sealed class HostCard : Control
             var receiveWidth = Math.Max(bounds.Height, (int)Math.Round(bounds.Width * receiveRatio));
             var receiveBounds = new Rectangle(bounds.Left, bounds.Top, Math.Min(bounds.Width, receiveWidth), bounds.Height);
             using var receivePath = RoundedPath(receiveBounds, bounds.Height / 2);
-            using var receiveFill = new SolidBrush(Color.FromArgb(180, AppTheme.Accent));
+            using var receiveFill = new SolidBrush(Color.FromArgb(180, AppTheme.NetworkReceive));
             graphics.FillPath(receiveFill, receivePath);
         }
 
@@ -1167,7 +1181,7 @@ internal sealed class HostCard : Control
             var clampedWidth = Math.Min(bounds.Width, sendWidth);
             var sendBounds = new Rectangle(bounds.Right - clampedWidth, bounds.Top, clampedWidth, bounds.Height);
             using var sendPath = RoundedPath(sendBounds, bounds.Height / 2);
-            using var sendFill = new SolidBrush(Color.FromArgb(180, AppTheme.Warning));
+            using var sendFill = new SolidBrush(Color.FromArgb(180, AppTheme.NetworkSend));
             graphics.FillPath(sendFill, sendPath);
         }
     }
