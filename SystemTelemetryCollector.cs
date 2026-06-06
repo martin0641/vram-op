@@ -9,6 +9,7 @@ internal sealed class SystemTelemetryCollector : IDisposable
 {
     private readonly GpuProcessMemoryReader _gpuMemoryReader = new();
     private readonly GpuUtilizationReader _gpuUtilizationReader = new();
+    private readonly NetworkUsageReader _networkUsageReader = new();
     private readonly UsageSampler _usageSampler;
     private readonly object _cpuCounterGate = new();
     private readonly PerformanceCounter? _cpuCounter;
@@ -40,6 +41,7 @@ internal sealed class SystemTelemetryCollector : IDisposable
         var restartIndex = ProcessRestartIndex.Read();
         var memory = ReadMemoryStatus();
         var averagedUsage = _usageSampler.ReadAverage();
+        var networkInterfaces = _networkUsageReader.Read();
         var topProcesses = gpuSnapshot.Rows
             .OrderByDescending(row => row.LocalBytes)
             .ThenByDescending(row => row.DedicatedBytes)
@@ -83,8 +85,14 @@ internal sealed class SystemTelemetryCollector : IDisposable
             _adapters.Sum(adapter => adapter.VramTotalBytes),
             gpuSnapshot.AdapterMemory.SharedBytes,
             _adapters,
+            networkInterfaces,
             topProcesses,
             gpuSnapshot.ErrorMessage);
+    }
+
+    public void ApplySettings(AppSettings settings)
+    {
+        _networkUsageReader.ApplySettings(settings);
     }
 
     private static string FormatProcessName(GpuProcessMemoryRow row)
@@ -266,6 +274,7 @@ internal sealed class SystemTelemetryCollector : IDisposable
         }
 
         _usageSampler.Dispose();
+        _networkUsageReader.Dispose();
         _gpuUtilizationReader.Dispose();
         _cpuCounter?.Dispose();
         _disposed = true;

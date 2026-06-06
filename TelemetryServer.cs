@@ -28,6 +28,7 @@ internal sealed class TelemetryServer : IAsyncDisposable
     public async Task StartAsync(AppSettings settings)
     {
         await StopAsync();
+        _collector.ApplySettings(settings);
 
         if (!settings.ListenerEnabled)
         {

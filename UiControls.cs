@@ -851,6 +851,8 @@ internal sealed class HostCard : Control
     private readonly AnimatedRatio _ramRatio = new();
     private readonly AnimatedRatio _gpuRatio = new();
     private readonly AnimatedRatio _vramRatio = new();
+    private readonly AnimatedRatio[] _networkReceiveRatios = [new(), new(), new(), new()];
+    private readonly AnimatedRatio[] _networkSendRatios = [new(), new(), new(), new()];
     private HostSnapshot? _snapshot;
     private int _smoothingDurationMs = 500;
 
@@ -868,6 +870,7 @@ internal sealed class HostCard : Control
     public bool IsSelected { get; set; }
     public bool UseCompactMemoryValues { get; set; }
     public bool ShowResizeGrip { get; set; }
+    public NetworkRateUnit NetworkUnit { get; set; } = NetworkRateUnit.Mbps;
 
     public int SmoothingDurationMs
     {
@@ -937,6 +940,7 @@ internal sealed class HostCard : Control
         e.Graphics.FillPath(fill, path);
         e.Graphics.DrawPath(border, path);
 
+        var networkRows = snapshot.NetworkInterfaces.Take(4).ToArray();
         var compact = Height < 220 || Width < 240;
         var pad = compact ? Math.Max(10, Font.Height / 2) : Math.Max(12, Font.Height);
         var inner = Rectangle.Inflate(rect, -pad, -pad);
@@ -946,12 +950,30 @@ internal sealed class HostCard : Control
         TextRenderer.DrawText(e.Graphics, snapshot.DisplayName, titleFont, new Rectangle(inner.Left, inner.Top, inner.Width, titleHeight), AppTheme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
         TextRenderer.DrawText(e.Graphics, snapshot.Status, Font, new Rectangle(inner.Left, inner.Top + titleHeight, inner.Width, statusHeight), AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
 
-        var lineHeight = compact ? Math.Max(Font.Height + 3, 22) : Math.Max(Font.Height + 8, 26);
         var y = inner.Top + titleHeight + statusHeight + (compact ? 4 : Math.Max(10, Font.Height / 2));
+        var totalLines = 4 + networkRows.Length;
+        var availableLineHeight = totalLines <= 0
+            ? 0
+            : Math.Max(Font.Height + 3, (inner.Bottom - y - (ShowResizeGrip ? Math.Max(12, Font.Height) : 0)) / totalLines);
+        var desiredLineHeight = compact ? Math.Max(Font.Height + 3, 22) : Math.Max(Font.Height + 8, 26);
+        var lineHeight = Math.Max(Font.Height + 3, Math.Min(desiredLineHeight, availableLineHeight));
         DrawMetricLine(e.Graphics, "CPU", _cpuRatio.Display, Formatters.Percent(snapshot.CpuPercent), y, lineHeight, AppTheme.Accent);
         DrawMetricLine(e.Graphics, "RAM", _ramRatio.Display, MemoryLine(snapshot.RamUsedBytes, snapshot.RamTotalBytes), y + lineHeight, lineHeight, AppTheme.Good);
         DrawMetricLine(e.Graphics, "GPU", _gpuRatio.Display, Formatters.Percent(snapshot.GpuPercent), y + lineHeight * 2, lineHeight, AppTheme.Warning);
         DrawMetricLine(e.Graphics, "VRAM", _vramRatio.Display, MemoryLine(snapshot.VramUsedBytes, snapshot.VramTotalBytes), y + lineHeight * 3, lineHeight, AppTheme.Danger);
+
+        for (var index = 0; index < networkRows.Length; index++)
+        {
+            var network = networkRows[index];
+            DrawNetworkMetricLine(
+                e.Graphics,
+                network.Label,
+                _networkReceiveRatios[index].Display,
+                _networkSendRatios[index].Display,
+                NetworkRateFormatter.FormatPair(network.ReceiveBytesPerSecond, network.SendBytesPerSecond, NetworkUnit),
+                y + lineHeight * (4 + index),
+                lineHeight);
+        }
 
         if (ShowResizeGrip)
         {
@@ -967,6 +989,11 @@ internal sealed class HostCard : Control
             _ramRatio.SnapTo(0);
             _gpuRatio.SnapTo(0);
             _vramRatio.SnapTo(0);
+            foreach (var ratio in _networkReceiveRatios.Concat(_networkSendRatios))
+            {
+                ratio.SnapTo(0);
+            }
+
             _animationTimer.Stop();
             return;
         }
@@ -975,8 +1002,23 @@ internal sealed class HostCard : Control
         _ramRatio.SetTarget(Formatters.Ratio(_snapshot.RamUsedBytes, _snapshot.RamTotalBytes), SmoothingDurationMs);
         _gpuRatio.SetTarget(_snapshot.GpuPercent / 100, SmoothingDurationMs);
         _vramRatio.SetTarget(Formatters.Ratio(_snapshot.VramUsedBytes, _snapshot.VramTotalBytes), SmoothingDurationMs);
+        var networkRows = _snapshot.NetworkInterfaces.Take(4).ToArray();
+        for (var index = 0; index < _networkReceiveRatios.Length; index++)
+        {
+            if (index < networkRows.Length)
+            {
+                var network = networkRows[index];
+                _networkReceiveRatios[index].SetTarget(NetworkRateFormatter.RatioToLink(network.ReceiveBytesPerSecond, network.LinkSpeedBitsPerSecond), SmoothingDurationMs);
+                _networkSendRatios[index].SetTarget(NetworkRateFormatter.RatioToLink(network.SendBytesPerSecond, network.LinkSpeedBitsPerSecond), SmoothingDurationMs);
+            }
+            else
+            {
+                _networkReceiveRatios[index].SetTarget(0, SmoothingDurationMs);
+                _networkSendRatios[index].SetTarget(0, SmoothingDurationMs);
+            }
+        }
 
-        if (_cpuRatio.IsActive || _ramRatio.IsActive || _gpuRatio.IsActive || _vramRatio.IsActive)
+        if (HasActiveAnimations())
         {
             StartAnimation();
         }
@@ -988,6 +1030,10 @@ internal sealed class HostCard : Control
         _ramRatio.SnapTo(_ramRatio.Target);
         _gpuRatio.SnapTo(_gpuRatio.Target);
         _vramRatio.SnapTo(_vramRatio.Target);
+        foreach (var ratio in _networkReceiveRatios.Concat(_networkSendRatios))
+        {
+            ratio.SnapTo(ratio.Target);
+        }
     }
 
     private void StartAnimation()
@@ -1005,7 +1051,12 @@ internal sealed class HostCard : Control
             | _gpuRatio.Update(SmoothingDurationMs)
             | _vramRatio.Update(SmoothingDurationMs);
 
-        if (!_cpuRatio.IsActive && !_ramRatio.IsActive && !_gpuRatio.IsActive && !_vramRatio.IsActive)
+        foreach (var ratio in _networkReceiveRatios.Concat(_networkSendRatios))
+        {
+            changed |= ratio.Update(SmoothingDurationMs);
+        }
+
+        if (!HasActiveAnimations())
         {
             _animationTimer.Stop();
         }
@@ -1015,6 +1066,14 @@ internal sealed class HostCard : Control
             Invalidate();
         }
     }
+
+    private bool HasActiveAnimations() =>
+        _cpuRatio.IsActive
+        || _ramRatio.IsActive
+        || _gpuRatio.IsActive
+        || _vramRatio.IsActive
+        || _networkReceiveRatios.Any(ratio => ratio.IsActive)
+        || _networkSendRatios.Any(ratio => ratio.IsActive);
 
     private string MemoryLine(long usedBytes, long totalBytes)
     {
@@ -1065,6 +1124,52 @@ internal sealed class HostCard : Control
 
         var valueRect = new Rectangle(barRect.Right + 8, y, Width - barRect.Right - left - 8, lineHeight);
         TextRenderer.DrawText(graphics, value, Font, valueRect, AppTheme.Text, TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+    }
+
+    private void DrawNetworkMetricLine(Graphics graphics, string label, double receiveRatio, double sendRatio, string value, int y, int lineHeight)
+    {
+        var labelWidth = Math.Max(48, TextRenderer.MeasureText(label, Font).Width + 4);
+        var valueWidth = Math.Min(Math.Max(112, Width / 3), Math.Max(112, Width - labelWidth - 110));
+        var left = Math.Max(12, Font.Height);
+        var barHeight = Math.Max(8, Font.Height / 2);
+        var labelRect = new Rectangle(left, y, labelWidth, lineHeight);
+        TextRenderer.DrawText(graphics, label, Font, labelRect, AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+
+        var barLeft = left + labelWidth + 8;
+        var barRight = Width - valueWidth - left - 8;
+        var barRect = new Rectangle(barLeft, y + (lineHeight - barHeight) / 2, Math.Max(36, barRight - barLeft), barHeight);
+        DrawDuplexProgress(graphics, barRect, receiveRatio, sendRatio);
+
+        var valueRect = new Rectangle(barRect.Right + 8, y, Width - barRect.Right - left - 8, lineHeight);
+        TextRenderer.DrawText(graphics, value, Font, valueRect, AppTheme.Text, TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+    }
+
+    private static void DrawDuplexProgress(Graphics graphics, Rectangle bounds, double receiveRatio, double sendRatio)
+    {
+        receiveRatio = Math.Min(1, Math.Max(0, receiveRatio));
+        sendRatio = Math.Min(1, Math.Max(0, sendRatio));
+        using var backgroundPath = RoundedPath(bounds, bounds.Height / 2);
+        using var background = new SolidBrush(Color.FromArgb(44, 52, 66));
+        graphics.FillPath(background, backgroundPath);
+
+        if (receiveRatio > 0)
+        {
+            var receiveWidth = Math.Max(bounds.Height, (int)Math.Round(bounds.Width * receiveRatio));
+            var receiveBounds = new Rectangle(bounds.Left, bounds.Top, Math.Min(bounds.Width, receiveWidth), bounds.Height);
+            using var receivePath = RoundedPath(receiveBounds, bounds.Height / 2);
+            using var receiveFill = new SolidBrush(Color.FromArgb(180, AppTheme.Accent));
+            graphics.FillPath(receiveFill, receivePath);
+        }
+
+        if (sendRatio > 0)
+        {
+            var sendWidth = Math.Max(bounds.Height, (int)Math.Round(bounds.Width * sendRatio));
+            var clampedWidth = Math.Min(bounds.Width, sendWidth);
+            var sendBounds = new Rectangle(bounds.Right - clampedWidth, bounds.Top, clampedWidth, bounds.Height);
+            using var sendPath = RoundedPath(sendBounds, bounds.Height / 2);
+            using var sendFill = new SolidBrush(Color.FromArgb(180, AppTheme.Warning));
+            graphics.FillPath(sendFill, sendPath);
+        }
     }
 
     private void DrawResizeGrip(Graphics graphics, Rectangle bounds, Color baseColor)

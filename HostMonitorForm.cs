@@ -50,8 +50,8 @@ internal sealed class HostMonitorForm : Form
         MaximizeBox = true;
         ShowInTaskbar = true;
         StartPosition = FormStartPosition.Manual;
-        MinimumSize = new Size(280, 190);
-        ClientSize = new Size(380, 238);
+        MinimumSize = new Size(320, 260);
+        ClientSize = new Size(430, 340);
         Padding = Padding.Empty;
         KeyPreview = true;
 
@@ -81,10 +81,11 @@ internal sealed class HostMonitorForm : Form
         base.Dispose(disposing);
     }
 
-    public void UpdateSnapshot(HostSnapshot snapshot, int smoothingDurationMs)
+    public void UpdateSnapshot(HostSnapshot snapshot, int smoothingDurationMs, NetworkRateUnit networkUnit)
     {
         Text = $"{snapshot.DisplayName} - VRAM Vue";
         _card.SmoothingDurationMs = smoothingDurationMs;
+        _card.NetworkUnit = networkUnit;
         _card.Snapshot = snapshot;
         _card.Invalidate();
     }
@@ -209,7 +210,7 @@ internal sealed class HostMonitorForm : Form
         var contentWidth = Math.Max(1, ClientSize.Width - Padding.Horizontal);
         var contentHeight = Math.Max(1, ClientSize.Height - Padding.Vertical);
         var sizeFromWidth = contentWidth / 38F;
-        var sizeFromHeight = contentHeight / 17F;
+        var sizeFromHeight = contentHeight / 24F;
         var fontSize = Math.Clamp(Math.Min(sizeFromWidth, sizeFromHeight), 7.5F, 22F);
 
         if (Math.Abs(fontSize - _lastFontSize) < 0.25F)

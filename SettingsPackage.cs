@@ -172,6 +172,10 @@ internal static class SettingsPackage
         public bool MonitorWindowsStayOnTop { get; set; } = true;
         public int MonitorWindowOpacityPercent { get; set; } = 95;
         public bool ConfirmTaskKills { get; set; } = true;
+        public NetworkSelectionMode NetworkSelectionMode { get; set; } = NetworkSelectionMode.Auto;
+        public List<string> TrackedNetworkInterfaceIds { get; set; } = [];
+        public NetworkRateUnit NetworkRateUnit { get; set; } = NetworkRateUnit.Mbps;
+        public int AverageWindowMinutes { get; set; } = 5;
         public Dictionary<string, string> ThemeColors { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public List<PortableRemoteHost> RemoteHosts { get; set; } = [];
 
@@ -187,6 +191,10 @@ internal static class SettingsPackage
                 MonitorWindowsStayOnTop = settings.MonitorWindowsStayOnTop,
                 MonitorWindowOpacityPercent = settings.MonitorWindowOpacityPercent,
                 ConfirmTaskKills = settings.ConfirmTaskKills,
+                NetworkSelectionMode = settings.NetworkSelectionMode,
+                TrackedNetworkInterfaceIds = settings.TrackedNetworkInterfaceIds.ToList(),
+                NetworkRateUnit = settings.NetworkRateUnit,
+                AverageWindowMinutes = settings.AverageWindowMinutes,
                 ThemeColors = new Dictionary<string, string>(settings.ThemeColors, StringComparer.OrdinalIgnoreCase),
                 RemoteHosts = settings.RemoteHosts.Select(PortableRemoteHost.From).ToList()
             };
@@ -203,6 +211,10 @@ internal static class SettingsPackage
                 MonitorWindowsStayOnTop = MonitorWindowsStayOnTop,
                 MonitorWindowOpacityPercent = MonitorWindowOpacityPercent,
                 ConfirmTaskKills = ConfirmTaskKills,
+                NetworkSelectionMode = NetworkSelectionMode,
+                TrackedNetworkInterfaceIds = TrackedNetworkInterfaceIds ?? [],
+                NetworkRateUnit = NetworkRateUnit,
+                AverageWindowMinutes = AverageWindowMinutes,
                 ThemeColors = new Dictionary<string, string>(ThemeColors, StringComparer.OrdinalIgnoreCase),
                 RemoteHosts = RemoteHosts.Select(item => item.ToRemoteHostConfig()).ToList()
             };

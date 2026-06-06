@@ -1,19 +1,19 @@
 # VRAM Vue v6 Security Check
 
 Date: 2026-06-06
-Version: 6.0.3
-Installer: `dist\VRAMVue-Setup-v6.0.3-win-x64.msi`
-Portable: `dist\VRAMVue-Portable-v6.0.3-win-x64.zip`
+Version: 6.0.4
+Installer: `dist\VRAMVue-Setup-v6.0.4-win-x64.msi`
+Portable: `dist\VRAMVue-Portable-v6.0.4-win-x64.zip`
 
 ## Summary
 
-No vulnerable or deprecated NuGet packages were reported by the current configured NuGet source. A lightweight secret scan found code-level password/token identifiers but no committed credentials or private keys. WiX MSI validation passed. The distribution build produces both a self-contained MSI and a self-contained portable zip, and settings exports now use password-based AES-256-GCM encryption.
+No vulnerable or deprecated NuGet packages were reported by the current configured NuGet source. A lightweight secret scan found code-level password/token identifiers but no committed credentials or private keys. WiX MSI validation passed. The distribution build produces both a self-contained MSI and a self-contained portable zip, settings exports use password-based AES-256-GCM encryption, and network activity telemetry is collected without adding new third-party dependencies.
 
-## Official GitHub Release Artifact Hashes
+## Local Smoke Artifact Hashes
 
 ```text
-VRAMVue-Setup-v6.0.3-win-x64.msi     9AB035B703C550DF6C79886C97BD67529D8EF679E644A6D1106F9C8258BBB550
-VRAMVue-Portable-v6.0.3-win-x64.zip  448D04A801445D97177305B60B37B6D09ACDE1E2E7DE1ADF94649C451971EB51
+VRAMVue-Setup-v6.0.4-win-x64.msi     F4EC157DA46B3C6EC28E10FC45DE979C5B1ECA89C45CF2E236C4B22302718FF0
+VRAMVue-Portable-v6.0.4-win-x64.zip  3958DE7D91011071C66B60BB650D36276FBB9C8F358CD755BF816263D01928CD
 ```
 
 ## Commands Run
@@ -24,8 +24,8 @@ dotnet list .\VramOp.csproj package --deprecated
 dotnet restore .\VramOp.csproj /p:NuGetAudit=true /p:NuGetAuditMode=all
 dotnet list .\VramOp.csproj package --outdated
 rg -n --hidden -S "(password\s*=|ProtectedPassword|BEGIN (RSA|OPENSSH|PRIVATE) KEY|ghp_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|AKIA[0-9A-Z]{16}|client_secret|api[_-]?key|token\s*=)" . -g "!bin/**" -g "!obj/**" -g "!artifacts/**" -g "!dist/**" -g "!**/.git/**"
-.\scripts\Build-Msi.ps1 -Version 6.0.3
-wix msi validate .\dist\VRAMVue-Setup-v6.0.3-win-x64.msi
+.\scripts\Build-Msi.ps1 -Version 6.0.4
+wix msi validate .\dist\VRAMVue-Setup-v6.0.4-win-x64.msi
 ```
 
 ## Results

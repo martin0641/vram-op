@@ -12,6 +12,8 @@ internal sealed class MainForm : Form
     private const int WmEnterSizeMove = 0x0231;
     private const int WmExitSizeMove = 0x0232;
     private const int MaxBarSmoothingMs = 6000;
+    private const int MaxNetworkInterfaces = 4;
+    private const int MaxAverageWindowMinutes = 72 * 60;
 
     private readonly AppSettings _settings;
     private readonly SystemTelemetryCollector _collector = new();
@@ -20,6 +22,7 @@ internal sealed class MainForm : Form
     private readonly Dictionary<Guid, HostSnapshot> _hostSnapshots = [];
     private readonly Dictionary<Guid, HostCard> _hostCards = [];
     private readonly Dictionary<Guid, HostMonitorForm> _monitorWindows = [];
+    private readonly Dictionary<Guid, RollingHostMetricHistory> _hostMetricHistories = [];
     private readonly BindingSource _processBinding = new();
     private readonly NotifyIcon _notifyIcon = new();
     private readonly ToolTip _toolTip = new();
@@ -57,8 +60,10 @@ internal sealed class MainForm : Form
     private readonly CheckBox _listenerEnabledBox = new();
     private readonly CheckBox _confirmKillsBox = new();
     private readonly CheckBox _monitorTopMostBox = new();
+    private readonly CheckBox _networkAutoBox = new();
     private readonly NumericUpDown _listenerPortBox = new();
     private readonly NumericUpDown _monitorOpacityBox = new();
+    private readonly NumericUpDown _averageWindowBox = new();
     private readonly TextBox _listenerUserBox = new();
     private readonly TextBox _listenerPasswordBox = new();
     private readonly BufferedFlowLayoutPanel _remotePillsPanel = new();
@@ -70,6 +75,10 @@ internal sealed class MainForm : Form
     private readonly TextBox _remoteThumbprintBox = new();
     private readonly TextBox _settingsTransferPasswordBox = new();
     private readonly BufferedFlowLayoutPanel _themeSwatchesPanel = new();
+    private readonly ComboBox _networkUnitBox = new();
+    private readonly ComboBox[] _networkInterfaceBoxes = Enumerable.Range(0, MaxNetworkInterfaces)
+        .Select(_ => new ComboBox())
+        .ToArray();
 
     private Guid _localHostId = Guid.Empty;
     private Guid? _selectedHostId;
@@ -96,6 +105,9 @@ internal sealed class MainForm : Form
         _settings = SettingsStore.Load();
         _settings.RemoteHosts ??= [];
         _settings.ThemeColors ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        _settings.TrackedNetworkInterfaceIds ??= [];
+        _settings.AverageWindowMinutes = Math.Clamp(_settings.AverageWindowMinutes, 1, MaxAverageWindowMinutes);
+        _collector.ApplySettings(_settings);
         AppTheme.Apply(_settings.ThemeColors);
         _server = new TelemetryServer(_collector);
         _appIcon = AppIconFactory.CreateIcon();
@@ -666,17 +678,19 @@ internal sealed class MainForm : Form
         _settingsContent.Dock = DockStyle.Top;
         _settingsContent.AutoSize = true;
         _settingsContent.ColumnCount = 2;
-        _settingsContent.RowCount = 2;
+        _settingsContent.RowCount = 3;
         _settingsContent.BackColor = AppTheme.Background;
         _settingsContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         _settingsContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        _settingsContent.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         _settingsContent.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         _settingsContent.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         _settingsContent.Controls.Add(BuildListenerSettings(), 0, 0);
         _settingsContent.Controls.Add(BuildRemoteSettings(), 1, 0);
         _settingsContent.Controls.Add(BuildMonitorAndTransferSettings(), 0, 1);
-        _settingsContent.Controls.Add(BuildThemeSettings(), 1, 1);
+        _settingsContent.Controls.Add(BuildNetworkSettings(), 1, 1);
+        _settingsContent.Controls.Add(BuildThemeSettings(), 1, 2);
         scroll.Controls.Add(_settingsContent);
         _settingsPage.Controls.Add(scroll);
     }
@@ -890,6 +904,72 @@ internal sealed class MainForm : Form
         return panel;
     }
 
+    private Control BuildNetworkSettings()
+    {
+        var panel = new RoundedPanel
+        {
+            Dock = DockStyle.Top,
+            Margin = new Padding(12, 12, 0, 0),
+            BackColor = AppTheme.Surface,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(0, 0)
+        };
+
+        var layout = CreateSettingsLayout();
+        AddSectionTitle(layout, "Network activity", 0);
+
+        _networkAutoBox.Text = "Auto detect active NICs";
+        _networkAutoBox.ForeColor = AppTheme.Text;
+        _networkAutoBox.AutoSize = true;
+        SetSettingsRowHeight(layout, 1, CheckBoxRowHeight(_networkAutoBox));
+        layout.Controls.Add(_networkAutoBox, 0, 1);
+        layout.SetColumnSpan(_networkAutoBox, 2);
+
+        ConfigureSettingsComboBox(_networkUnitBox);
+        _networkUnitBox.Items.Clear();
+        foreach (var unit in Enum.GetValues<NetworkRateUnit>())
+        {
+            _networkUnitBox.Items.Add(new NetworkRateUnitItem(unit));
+        }
+
+        AddLabeledControl(layout, "Rate units", _networkUnitBox, 2);
+
+        _averageWindowBox.Minimum = 1;
+        _averageWindowBox.Maximum = MaxAverageWindowMinutes;
+        _averageWindowBox.Increment = 5;
+        _averageWindowBox.BackColor = AppTheme.SurfaceRaised;
+        _averageWindowBox.ForeColor = AppTheme.Text;
+        _averageWindowBox.BorderStyle = BorderStyle.FixedSingle;
+        _averageWindowBox.TextAlign = HorizontalAlignment.Left;
+        AddLabeledControl(layout, "Average window", CreateAverageWindowEditor(), 3);
+
+        for (var index = 0; index < _networkInterfaceBoxes.Length; index++)
+        {
+            var comboBox = _networkInterfaceBoxes[index];
+            ConfigureSettingsComboBox(comboBox);
+            AddLabeledControl(layout, $"NIC{index + 1}", comboBox, 4 + index);
+        }
+
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false,
+            BackColor = AppTheme.Surface
+        };
+        var refreshButton = new RoundedButton { Text = "Refresh NICs", Width = 122 };
+        refreshButton.Click += (_, _) => PopulateNetworkInterfaceSelectors();
+        buttons.Controls.Add(refreshButton);
+        SetSettingsRowHeight(layout, 8, ButtonRowHeight(refreshButton));
+        layout.Controls.Add(buttons, 0, 8);
+        layout.SetColumnSpan(buttons, 2);
+
+        panel.Controls.Add(layout);
+        PopulateNetworkInterfaceSelectors();
+        return panel;
+    }
+
     private Control CreateIntervalEditor()
     {
         var panel = new TableLayoutPanel
@@ -1002,6 +1082,39 @@ internal sealed class MainForm : Form
         return panel;
     }
 
+    private Control CreateAverageWindowEditor()
+    {
+        var panel = new TableLayoutPanel
+        {
+            Dock = DockStyle.None,
+            ColumnCount = 2,
+            RowCount = 1,
+            Height = SettingsInputHeight(_averageWindowBox),
+            BackColor = AppTheme.Surface
+        };
+        var digitWidth = Math.Max(88, TextRenderer.MeasureText("4320", _averageWindowBox.Font).Width + 36);
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, digitWidth));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Math.Max(48, TextRenderer.MeasureText("min", Font).Width + 22)));
+
+        _averageWindowBox.Width = digitWidth - 10;
+        _averageWindowBox.Dock = DockStyle.Left;
+        _averageWindowBox.Margin = new Padding(0, 2, 0, 2);
+
+        var unitLabel = new Label
+        {
+            Text = "min",
+            Dock = DockStyle.Fill,
+            ForeColor = AppTheme.MutedText,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Margin = new Padding(8, 0, 0, 0)
+        };
+
+        panel.Controls.Add(_averageWindowBox, 0, 0);
+        panel.Controls.Add(unitLabel, 1, 0);
+        panel.Width = digitWidth + (int)panel.ColumnStyles[1].Width;
+        return panel;
+    }
+
     private Control BuildRemoteSettings()
     {
         var panel = new RoundedPanel
@@ -1109,6 +1222,16 @@ internal sealed class MainForm : Form
         return layout;
     }
 
+    private static void ConfigureSettingsComboBox(ComboBox comboBox)
+    {
+        comboBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        comboBox.BackColor = AppTheme.SurfaceRaised;
+        comboBox.ForeColor = AppTheme.Text;
+        comboBox.FlatStyle = FlatStyle.Flat;
+        comboBox.IntegralHeight = false;
+        comboBox.MaxDropDownItems = 12;
+    }
+
     private void AddSectionTitle(TableLayoutPanel layout, string text, int row)
     {
         var title = new Label
@@ -1173,6 +1296,7 @@ internal sealed class MainForm : Form
         {
             TextBox textBox => Math.Max(textBox.Font.Height + 16, 34),
             NumericUpDown numeric => Math.Max(numeric.Font.Height + 18, 36),
+            ComboBox comboBox => Math.Max(comboBox.Font.Height + 18, 36),
             _ => Math.Max(control.MinimumSize.Height, Math.Max(control.Font.Height + 16, 36))
         };
 
@@ -1278,6 +1402,38 @@ internal sealed class MainForm : Form
         _barSmoothingBox.Leave += (_, _) => ApplyBarSmoothingFromBox(save: true);
         _monitorTopMostBox.CheckedChanged += (_, _) => ApplyMonitorWindowOptions(save: true);
         _monitorOpacityBox.ValueChanged += (_, _) => ApplyMonitorWindowOptions(save: true);
+        _networkAutoBox.CheckedChanged += (_, _) =>
+        {
+            if (!_loadingSettingsControls)
+            {
+                ApplyNetworkSettings(save: true);
+            }
+        };
+        _networkUnitBox.SelectedIndexChanged += (_, _) =>
+        {
+            if (!_loadingSettingsControls)
+            {
+                ApplyNetworkSettings(save: true);
+            }
+        };
+        _averageWindowBox.ValueChanged += (_, _) =>
+        {
+            if (!_loadingSettingsControls)
+            {
+                ApplyNetworkSettings(save: true);
+            }
+        };
+        foreach (var comboBox in _networkInterfaceBoxes)
+        {
+            comboBox.SelectedIndexChanged += (_, _) =>
+            {
+                if (!_loadingSettingsControls)
+                {
+                    ApplyNetworkSettings(save: true);
+                }
+            };
+        }
+
         _killButton.Click += async (_, _) => await KillSelectedProcessAsync();
         _killParentButton.Click += async (_, _) => await KillSelectedParentProcessAsync();
         _stopServiceButton.Click += async (_, _) => await ControlSelectedServiceAsync(ServiceControlAction.Stop);
@@ -1303,10 +1459,15 @@ internal sealed class MainForm : Form
             _settings.UpdateIntervalMs = Math.Clamp(_settings.UpdateIntervalMs, 250, 9999);
             _settings.BarSmoothingMs = Math.Clamp(_settings.BarSmoothingMs, 0, MaxBarSmoothingMs);
             _settings.MonitorWindowOpacityPercent = Math.Clamp(_settings.MonitorWindowOpacityPercent, 30, 100);
+            _settings.AverageWindowMinutes = Math.Clamp(_settings.AverageWindowMinutes, 1, MaxAverageWindowMinutes);
             _intervalBox.Value = _settings.UpdateIntervalMs;
             _barSmoothingBox.Value = _settings.BarSmoothingMs;
             _monitorTopMostBox.Checked = _settings.MonitorWindowsStayOnTop;
             _monitorOpacityBox.Value = _settings.MonitorWindowOpacityPercent;
+            _networkAutoBox.Checked = _settings.NetworkSelectionMode == NetworkSelectionMode.Auto;
+            _averageWindowBox.Value = _settings.AverageWindowMinutes;
+            SelectNetworkRateUnit(_settings.NetworkRateUnit);
+            PopulateNetworkInterfaceSelectors();
 
             _listenerEnabledBox.Checked = _settings.ListenerEnabled;
             _confirmKillsBox.Checked = _settings.ConfirmTaskKills;
@@ -1321,6 +1482,7 @@ internal sealed class MainForm : Form
 
         ApplyBarSmoothingToControls();
         ApplyMonitorWindowOptionsToOpenWindows();
+        ApplyNetworkSettings(save: false);
         RefreshRemoteList();
         RefreshThemeSwatches();
     }
@@ -1384,7 +1546,7 @@ internal sealed class MainForm : Form
         {
             if (_hostSnapshots.TryGetValue(window.HostId, out var snapshot))
             {
-                window.UpdateSnapshot(snapshot, _settings.BarSmoothingMs);
+                window.UpdateSnapshot(snapshot, _settings.BarSmoothingMs, _settings.NetworkRateUnit);
             }
         }
     }
@@ -1415,6 +1577,97 @@ internal sealed class MainForm : Form
         foreach (var window in _monitorWindows.Values)
         {
             window.ApplyOptions(_settings.MonitorWindowsStayOnTop, _settings.MonitorWindowOpacityPercent);
+        }
+    }
+
+    private void PopulateNetworkInterfaceSelectors()
+    {
+        var selectedIds = _settings.TrackedNetworkInterfaceIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Take(MaxNetworkInterfaces)
+            .ToArray();
+        var options = NetworkUsageReader.GetAvailableInterfaces();
+
+        for (var index = 0; index < _networkInterfaceBoxes.Length; index++)
+        {
+            var comboBox = _networkInterfaceBoxes[index];
+            comboBox.BeginUpdate();
+            comboBox.Items.Clear();
+            comboBox.Items.Add(NetworkInterfaceSelectionItem.None);
+            foreach (var option in options)
+            {
+                comboBox.Items.Add(new NetworkInterfaceSelectionItem(option));
+            }
+
+            var desiredId = index < selectedIds.Length ? selectedIds[index] : string.Empty;
+            comboBox.SelectedItem = comboBox.Items
+                .Cast<NetworkInterfaceSelectionItem>()
+                .FirstOrDefault(item => string.Equals(item.Id, desiredId, StringComparison.OrdinalIgnoreCase))
+                ?? NetworkInterfaceSelectionItem.None;
+            comboBox.Enabled = _settings.NetworkSelectionMode == NetworkSelectionMode.Manual;
+            comboBox.EndUpdate();
+        }
+    }
+
+    private void SelectNetworkRateUnit(NetworkRateUnit unit)
+    {
+        foreach (var item in _networkUnitBox.Items.OfType<NetworkRateUnitItem>())
+        {
+            if (item.Unit == unit)
+            {
+                _networkUnitBox.SelectedItem = item;
+                return;
+            }
+        }
+
+        if (_networkUnitBox.Items.Count > 0)
+        {
+            _networkUnitBox.SelectedIndex = 0;
+        }
+    }
+
+    private void ApplyNetworkSettings(bool save)
+    {
+        var selectedIds = _networkInterfaceBoxes
+            .Select(comboBox => comboBox.SelectedItem)
+            .OfType<NetworkInterfaceSelectionItem>()
+            .Select(item => item.Id)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(MaxNetworkInterfaces)
+            .ToList();
+        var selectedUnit = (_networkUnitBox.SelectedItem as NetworkRateUnitItem)?.Unit ?? _settings.NetworkRateUnit;
+        var averageWindowMinutes = Math.Clamp((int)_averageWindowBox.Value, 1, MaxAverageWindowMinutes);
+        var mode = _networkAutoBox.Checked ? NetworkSelectionMode.Auto : NetworkSelectionMode.Manual;
+        var changed = _settings.NetworkSelectionMode != mode
+            || _settings.NetworkRateUnit != selectedUnit
+            || _settings.AverageWindowMinutes != averageWindowMinutes
+            || !_settings.TrackedNetworkInterfaceIds.SequenceEqual(selectedIds, StringComparer.OrdinalIgnoreCase);
+
+        _settings.NetworkSelectionMode = mode;
+        _settings.NetworkRateUnit = selectedUnit;
+        _settings.AverageWindowMinutes = averageWindowMinutes;
+        _settings.TrackedNetworkInterfaceIds = selectedIds;
+        _collector.ApplySettings(_settings);
+
+        foreach (var comboBox in _networkInterfaceBoxes)
+        {
+            comboBox.Enabled = mode == NetworkSelectionMode.Manual;
+        }
+
+        if (_averageWindowBox.Value != averageWindowMinutes)
+        {
+            _averageWindowBox.Value = averageWindowMinutes;
+        }
+
+        PruneHostMetricHistories();
+        UpdateHostCards();
+        UpdateMonitorWindows();
+        RefreshSelectedHostView(forceProcessRefresh: false);
+
+        if (save && changed)
+        {
+            SettingsStore.Save(_settings);
         }
     }
 
@@ -1508,6 +1761,10 @@ internal sealed class MainForm : Form
         _settings.MonitorWindowsStayOnTop = imported.MonitorWindowsStayOnTop;
         _settings.MonitorWindowOpacityPercent = imported.MonitorWindowOpacityPercent;
         _settings.ConfirmTaskKills = imported.ConfirmTaskKills;
+        _settings.NetworkSelectionMode = imported.NetworkSelectionMode;
+        _settings.TrackedNetworkInterfaceIds = imported.TrackedNetworkInterfaceIds ?? [];
+        _settings.NetworkRateUnit = imported.NetworkRateUnit;
+        _settings.AverageWindowMinutes = Math.Clamp(imported.AverageWindowMinutes, 1, MaxAverageWindowMinutes);
         _settings.ThemeColors = new Dictionary<string, string>(imported.ThemeColors, StringComparer.OrdinalIgnoreCase);
         _settings.RemoteHosts = imported.RemoteHosts;
         _selectedRemoteHostId = null;
@@ -1836,6 +2093,7 @@ internal sealed class MainForm : Form
             .ToArray())
         {
             _hostSnapshots.Remove(staleId);
+            _hostMetricHistories.Remove(staleId);
             _hostListDirty = true;
         }
 
@@ -1885,6 +2143,7 @@ internal sealed class MainForm : Form
             RefreshRemoteList();
         }
 
+        RecordHostMetricHistories();
         UpdateHostCards();
         UpdateMonitorWindows();
         RefreshSelectedHostView();
@@ -1934,6 +2193,59 @@ internal sealed class MainForm : Form
         {
             _hostListDirty = true;
         }
+    }
+
+    private void RecordHostMetricHistories()
+    {
+        var window = AverageWindow;
+        var activeIds = _hostSnapshots.Keys.ToHashSet();
+        foreach (var staleId in _hostMetricHistories.Keys.Where(id => !activeIds.Contains(id)).ToArray())
+        {
+            _hostMetricHistories.Remove(staleId);
+        }
+
+        foreach (var snapshot in _hostSnapshots.Values)
+        {
+            if (snapshot.Telemetry is null)
+            {
+                continue;
+            }
+
+            if (!_hostMetricHistories.TryGetValue(snapshot.Id, out var history))
+            {
+                history = new RollingHostMetricHistory();
+                _hostMetricHistories[snapshot.Id] = history;
+            }
+
+            history.Add(snapshot, window);
+        }
+    }
+
+    private void PruneHostMetricHistories()
+    {
+        var window = AverageWindow;
+        foreach (var history in _hostMetricHistories.Values)
+        {
+            history.Prune(DateTimeOffset.Now, window);
+        }
+    }
+
+    private HostMetricAverage? GetHostMetricAverage(Guid id) =>
+        _hostMetricHistories.TryGetValue(id, out var history)
+            ? history.ReadAverage(AverageWindow)
+            : null;
+
+    private TimeSpan AverageWindow =>
+        TimeSpan.FromMinutes(Math.Clamp(_settings.AverageWindowMinutes, 1, MaxAverageWindowMinutes));
+
+    private string AverageWindowLabel()
+    {
+        var minutes = Math.Clamp(_settings.AverageWindowMinutes, 1, MaxAverageWindowMinutes);
+        return minutes < 60
+            ? $"{minutes}m"
+            : minutes % 60 == 0
+                ? $"{minutes / 60}h"
+                : $"{minutes / 60D:N1}h";
     }
 
     private void UpdateHostCards()
@@ -2002,11 +2314,13 @@ internal sealed class MainForm : Form
             }
 
             card.SmoothingDurationMs = _settings.BarSmoothingMs;
+            card.NetworkUnit = _settings.NetworkRateUnit;
             card.Snapshot = snapshot;
             card.IsSelected = snapshot.Id == _selectedHostId;
             var scrollReserve = orderedSnapshots.Length > 1 ? SystemInformation.VerticalScrollBarWidth : 0;
             card.Width = Math.Max(220, _hostCardsPanel.ClientSize.Width - scrollReserve - 8);
-            var preferredHeight = Math.Max(216, card.Font.Height * 7 + 104);
+            var networkRows = Math.Min(MaxNetworkInterfaces, snapshot.NetworkInterfaces.Count);
+            var preferredHeight = Math.Max(216, card.Font.Height * (7 + networkRows) + 104 + (networkRows * 18));
             if (orderedSnapshots.Length == 1 && _hostCardsPanel.ClientSize.Height > 234)
             {
                 preferredHeight = Math.Min(preferredHeight, _hostCardsPanel.ClientSize.Height - 28);
@@ -2043,7 +2357,7 @@ internal sealed class MainForm : Form
             else
             {
                 existing.SnapBoundsProvider = GetSnapTargetsForMonitorWindow;
-                existing.UpdateSnapshot(snapshot, _settings.BarSmoothingMs);
+                existing.UpdateSnapshot(snapshot, _settings.BarSmoothingMs, _settings.NetworkRateUnit);
                 existing.ApplyOptions(_settings.MonitorWindowsStayOnTop, _settings.MonitorWindowOpacityPercent);
                 if (existing.WindowState == FormWindowState.Minimized)
                 {
@@ -2061,7 +2375,7 @@ internal sealed class MainForm : Form
         window.ContextMenuOpened += (_, _) => BeginContextMenuInteraction();
         window.ContextMenuClosed += (_, _) => EndContextMenuInteraction();
         window.FormClosed += (_, _) => _monitorWindows.Remove(hostId);
-        window.UpdateSnapshot(snapshot, _settings.BarSmoothingMs);
+        window.UpdateSnapshot(snapshot, _settings.BarSmoothingMs, _settings.NetworkRateUnit);
         window.ApplyOptions(_settings.MonitorWindowsStayOnTop, _settings.MonitorWindowOpacityPercent);
         PositionHostMonitorWindow(window);
         _monitorWindows[hostId] = window;
@@ -2081,7 +2395,7 @@ internal sealed class MainForm : Form
 
             if (_hostSnapshots.TryGetValue(hostId, out var snapshot))
             {
-                window.UpdateSnapshot(snapshot, _settings.BarSmoothingMs);
+                window.UpdateSnapshot(snapshot, _settings.BarSmoothingMs, _settings.NetworkRateUnit);
                 window.ApplyOptions(_settings.MonitorWindowsStayOnTop, _settings.MonitorWindowOpacityPercent);
             }
             else
@@ -2200,10 +2514,36 @@ internal sealed class MainForm : Form
             return;
         }
 
-        SetMetric(_cpuCard, "CPU", Formatters.Percent(host.CpuPercent), host.DisplayName, host.CpuPercent / 100);
-        SetMemoryMetric(_ramCard, "RAM", host.RamUsedBytes, host.RamTotalBytes, AppTheme.Good);
-        SetMetric(_gpuCard, "GPU", Formatters.Percent(host.GpuPercent), "Engine utilization", host.GpuPercent / 100);
-        SetMemoryMetric(_vramCard, "VRAM", host.VramUsedBytes, host.VramTotalBytes, AppTheme.Danger);
+        var average = GetHostMetricAverage(host.Id);
+        var hasAverage = average is not null;
+        var averageValue = average.GetValueOrDefault();
+        var averageLabel = AverageWindowLabel();
+        SetMetric(
+            _cpuCard,
+            "CPU",
+            Formatters.Percent(host.CpuPercent),
+            BuildAverageDetail(averageLabel, hasAverage ? Formatters.Percent(averageValue.CpuPercent) : string.Empty, host.DisplayName),
+            host.CpuPercent / 100);
+        SetMemoryMetric(
+            _ramCard,
+            "RAM",
+            host.RamUsedBytes,
+            host.RamTotalBytes,
+            AppTheme.Good,
+            hasAverage ? $"{averageLabel} avg {Formatters.BytesPrecise((long)averageValue.RamUsedBytes)}" : string.Empty);
+        SetMetric(
+            _gpuCard,
+            "GPU",
+            Formatters.Percent(host.GpuPercent),
+            BuildAverageDetail(averageLabel, hasAverage ? Formatters.Percent(averageValue.GpuPercent) : string.Empty, "Engine utilization"),
+            host.GpuPercent / 100);
+        SetMemoryMetric(
+            _vramCard,
+            "VRAM",
+            host.VramUsedBytes,
+            host.VramTotalBytes,
+            AppTheme.Danger,
+            hasAverage ? $"{averageLabel} avg {Formatters.BytesPrecise((long)averageValue.VramUsedBytes)}" : string.Empty);
     }
 
     private static void SetMetric(MetricCard card, string title, string value, string detail, double ratio)
@@ -2223,15 +2563,23 @@ internal sealed class MainForm : Form
         card.Invalidate();
     }
 
-    private static void SetMemoryMetric(MetricCard card, string title, long usedBytes, long totalBytes, Color accentColor)
+    private static string BuildAverageDetail(string averageLabel, string averageValue, string fallbackDetail) =>
+        string.IsNullOrWhiteSpace(averageValue)
+            ? fallbackDetail
+            : $"{averageLabel} avg {averageValue} | {fallbackDetail}";
+
+    private static void SetMemoryMetric(MetricCard card, string title, long usedBytes, long totalBytes, Color accentColor, string averageDetail)
     {
         var freeBytes = Math.Max(0, totalBytes - usedBytes);
         var overBytes = Math.Max(0, usedBytes - totalBytes);
-        var detail = totalBytes <= 0
+        var capacityDetail = totalBytes <= 0
             ? "Total unknown"
             : overBytes > 0
                 ? $"{Formatters.BytesPrecise(overBytes)} over / {Formatters.BytesPrecise(totalBytes)} total"
                 : $"{Formatters.BytesPrecise(freeBytes)} free / {Formatters.BytesPrecise(totalBytes)} total";
+        var detail = string.IsNullOrWhiteSpace(averageDetail)
+            ? capacityDetail
+            : $"{averageDetail} | {capacityDetail}";
         var value = totalBytes <= 0
             ? Formatters.BytesPrecise(usedBytes)
             : $"{BytesAsGb(usedBytes)}/{BytesAsGb(totalBytes)}GB";
@@ -2508,6 +2856,7 @@ internal sealed class MainForm : Form
 
         _settings.RemoteHosts.RemoveAll(item => item.Id == remote.Id);
         _hostSnapshots.Remove(remote.Id);
+        _hostMetricHistories.Remove(remote.Id);
         _selectedRemoteHostId = null;
         SettingsStore.Save(_settings);
         RefreshRemoteList();
@@ -2820,5 +3169,96 @@ internal sealed class MainForm : Form
 
         public static RemoteRefreshResult Failed(RemoteHostConfig remote, string status) =>
             new(remote, null, null, status, false);
+    }
+
+    private sealed class RollingHostMetricHistory
+    {
+        private static readonly TimeSpan MinimumSampleSpacing = TimeSpan.FromSeconds(1);
+        private readonly Queue<HostMetricSample> _samples = [];
+        private DateTimeOffset _lastSampleAt = DateTimeOffset.MinValue;
+
+        public void Add(HostSnapshot snapshot, TimeSpan window)
+        {
+            var now = DateTimeOffset.Now;
+            if (now - _lastSampleAt < MinimumSampleSpacing)
+            {
+                Prune(now, window);
+                return;
+            }
+
+            _lastSampleAt = now;
+            _samples.Enqueue(new HostMetricSample(
+                now,
+                snapshot.CpuPercent,
+                snapshot.GpuPercent,
+                snapshot.RamUsedBytes,
+                snapshot.VramUsedBytes));
+            Prune(now, window);
+        }
+
+        public HostMetricAverage? ReadAverage(TimeSpan window)
+        {
+            var now = DateTimeOffset.Now;
+            Prune(now, window);
+            if (_samples.Count == 0)
+            {
+                return null;
+            }
+
+            return new HostMetricAverage(
+                _samples.Average(sample => sample.CpuPercent),
+                _samples.Average(sample => sample.GpuPercent),
+                _samples.Average(sample => sample.RamUsedBytes),
+                _samples.Average(sample => sample.VramUsedBytes));
+        }
+
+        public void Prune(DateTimeOffset now, TimeSpan window)
+        {
+            var cutoff = now - window;
+            while (_samples.Count > 0 && _samples.Peek().CapturedAt < cutoff)
+            {
+                _samples.Dequeue();
+            }
+        }
+    }
+
+    private readonly record struct HostMetricSample(
+        DateTimeOffset CapturedAt,
+        double CpuPercent,
+        double GpuPercent,
+        long RamUsedBytes,
+        long VramUsedBytes);
+
+    private readonly record struct HostMetricAverage(
+        double CpuPercent,
+        double GpuPercent,
+        double RamUsedBytes,
+        double VramUsedBytes);
+
+    private sealed record NetworkRateUnitItem(NetworkRateUnit Unit)
+    {
+        public override string ToString() => NetworkRateFormatter.DisplayName(Unit);
+    }
+
+    private sealed class NetworkInterfaceSelectionItem
+    {
+        public static NetworkInterfaceSelectionItem None { get; } = new(string.Empty, "(None)");
+
+        private readonly string _displayName;
+
+        private NetworkInterfaceSelectionItem(string id, string displayName)
+        {
+            Id = id;
+            _displayName = displayName;
+        }
+
+        public NetworkInterfaceSelectionItem(NetworkInterfaceOption option)
+            : this(option.Id, option.DisplayName)
+        {
+        }
+
+        public string Id { get; }
+
+        public override string ToString() => _displayName;
     }
 }

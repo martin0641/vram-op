@@ -12,6 +12,7 @@ internal sealed record HostTelemetry(
     long VramTotalBytes,
     long SharedGpuMemoryBytes,
     IReadOnlyList<GpuAdapterInfo> GpuAdapters,
+    IReadOnlyList<NetworkInterfaceTelemetry> NetworkInterfaces,
     IReadOnlyList<GpuProcessInfo> TopGpuProcesses,
     string? ErrorMessage);
 
@@ -19,6 +20,15 @@ internal sealed record GpuAdapterInfo(
     string Name,
     long VramTotalBytes,
     string DriverVersion);
+
+internal sealed record NetworkInterfaceTelemetry(
+    string Id,
+    string Name,
+    string Description,
+    string Label,
+    long LinkSpeedBitsPerSecond,
+    double ReceiveBytesPerSecond,
+    double SendBytesPerSecond);
 
 internal sealed record GpuProcessInfo(
     int ProcessId,
@@ -94,5 +104,6 @@ internal sealed class HostSnapshot
     public long VramUsedBytes => Telemetry?.VramUsedBytes ?? 0;
     public long VramTotalBytes => Telemetry?.VramTotalBytes ?? 0;
     public long SharedGpuMemoryBytes => Telemetry?.SharedGpuMemoryBytes ?? 0;
+    public IReadOnlyList<NetworkInterfaceTelemetry> NetworkInterfaces => Telemetry?.NetworkInterfaces ?? Array.Empty<NetworkInterfaceTelemetry>();
     public IReadOnlyList<GpuProcessInfo> TopGpuProcesses => Telemetry?.TopGpuProcesses ?? Array.Empty<GpuProcessInfo>();
 }
