@@ -7,6 +7,9 @@ namespace VramOp;
 
 internal sealed class SystemTelemetryCollector : IDisposable
 {
+    private static readonly TimeSpan GpuProcessRefreshInterval = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan RestartIndexRefreshInterval = TimeSpan.FromSeconds(2);
+
     private readonly GpuProcessMemoryReader _gpuMemoryReader = new();
     private readonly GpuUtilizationReader _gpuUtilizationReader = new();
     private readonly NetworkUsageReader _networkUsageReader = new();
@@ -14,6 +17,11 @@ internal sealed class SystemTelemetryCollector : IDisposable
     private readonly UsageSampler _usageSampler;
     private readonly List<GpuAdapterInfo> _adapters;
     private readonly string _hostId;
+    private readonly object _readGate = new();
+    private GpuProcessMemorySnapshot? _lastGpuSnapshot;
+    private DateTimeOffset _lastGpuSnapshotAt = DateTimeOffset.MinValue;
+    private ProcessRestartIndex? _lastRestartIndex;
+    private DateTimeOffset _lastRestartIndexAt = DateTimeOffset.MinValue;
     private bool _disposed;
 
     public SystemTelemetryCollector()
@@ -27,56 +35,61 @@ internal sealed class SystemTelemetryCollector : IDisposable
     public HostTelemetry Read(NetworkSelectionOverride? networkSelectionOverride = null)
     {
         var averagedUsage = _usageSampler.ReadAverage();
-        var gpuSnapshot = _gpuMemoryReader.Read();
-        var restartIndex = ProcessRestartIndex.Read();
-        var memory = ReadMemoryStatus();
-        var networkInterfaces = _networkUsageReader.Read(networkSelectionOverride);
-        var topProcesses = gpuSnapshot.Rows
-            .OrderByDescending(row => row.LocalBytes)
-            .ThenByDescending(row => row.DedicatedBytes)
-            .Take(10)
-            .Select(row =>
-            {
-                var parent = restartIndex.GetParent(row.ProcessId);
-                var service = restartIndex.GetPrimaryService(row.ProcessId);
-                return new GpuProcessInfo(
-                    row.ProcessId,
-                    FormatProcessName(row),
-                    row.LocalBytes,
-                    row.DedicatedBytes,
-                    row.SharedBytes,
-                    row.NonLocalBytes,
-                    row.TotalCommittedBytes,
-                    row.WindowTitle,
-                    row.ExecutablePath,
-                    row.Notes,
-                    row.CanKill,
-                    restartIndex.Describe(row),
-                    service?.Name ?? string.Empty,
-                    service?.DisplayName ?? string.Empty,
-                    service?.State ?? string.Empty,
-                    service?.StartMode ?? string.Empty,
-                    restartIndex.GetServiceCount(row.ProcessId),
-                    parent?.ProcessId,
-                    parent?.Name ?? string.Empty);
-            })
-            .ToArray();
 
-        return new HostTelemetry(
-            _hostId,
-            Environment.MachineName,
-            DateTimeOffset.Now,
-            averagedUsage.CpuPercent,
-            averagedUsage.GpuPercent,
-            memory.UsedBytes,
-            memory.TotalBytes,
-            gpuSnapshot.AdapterMemory.DedicatedBytes,
-            _adapters.Sum(adapter => adapter.VramTotalBytes),
-            gpuSnapshot.AdapterMemory.SharedBytes,
-            _adapters,
-            networkInterfaces,
-            topProcesses,
-            gpuSnapshot.ErrorMessage);
+        lock (_readGate)
+        {
+            var now = DateTimeOffset.Now;
+            var gpuSnapshot = ReadGpuSnapshot(now);
+            var restartIndex = ReadRestartIndex(now);
+            var memory = ReadMemoryStatus();
+            var networkInterfaces = _networkUsageReader.Read(networkSelectionOverride);
+            var topProcesses = gpuSnapshot.Rows
+                .OrderByDescending(row => row.LocalBytes)
+                .ThenByDescending(row => row.DedicatedBytes)
+                .Take(10)
+                .Select(row =>
+                {
+                    var parent = restartIndex.GetParent(row.ProcessId);
+                    var service = restartIndex.GetPrimaryService(row.ProcessId);
+                    return new GpuProcessInfo(
+                        row.ProcessId,
+                        FormatProcessName(row),
+                        row.LocalBytes,
+                        row.DedicatedBytes,
+                        row.SharedBytes,
+                        row.NonLocalBytes,
+                        row.TotalCommittedBytes,
+                        row.WindowTitle,
+                        row.ExecutablePath,
+                        row.Notes,
+                        row.CanKill,
+                        restartIndex.Describe(row),
+                        service?.Name ?? string.Empty,
+                        service?.DisplayName ?? string.Empty,
+                        service?.State ?? string.Empty,
+                        service?.StartMode ?? string.Empty,
+                        restartIndex.GetServiceCount(row.ProcessId),
+                        parent?.ProcessId,
+                        parent?.Name ?? string.Empty);
+                })
+                .ToArray();
+
+            return new HostTelemetry(
+                _hostId,
+                Environment.MachineName,
+                now,
+                averagedUsage.CpuPercent,
+                averagedUsage.GpuPercent,
+                memory.UsedBytes,
+                memory.TotalBytes,
+                gpuSnapshot.AdapterMemory.DedicatedBytes,
+                _adapters.Sum(adapter => adapter.VramTotalBytes),
+                gpuSnapshot.AdapterMemory.SharedBytes,
+                _adapters,
+                networkInterfaces,
+                topProcesses,
+                gpuSnapshot.ErrorMessage);
+        }
     }
 
     public void ApplySettings(AppSettings settings)
@@ -96,7 +109,12 @@ internal sealed class SystemTelemetryCollector : IDisposable
 
     public KillProcessResponse KillProcess(int processId)
     {
-        var snapshot = _gpuMemoryReader.Read();
+        GpuProcessMemorySnapshot snapshot;
+        lock (_readGate)
+        {
+            snapshot = ReadGpuSnapshot(DateTimeOffset.Now, force: true);
+        }
+
         var row = snapshot.Rows.FirstOrDefault(item => item.ProcessId == processId);
 
         if (row is null)
@@ -123,7 +141,12 @@ internal sealed class SystemTelemetryCollector : IDisposable
 
     public KillProcessResponse KillParentProcess(int processId)
     {
-        var restartIndex = ProcessRestartIndex.Read();
+        ProcessRestartIndex restartIndex;
+        lock (_readGate)
+        {
+            restartIndex = ReadRestartIndex(DateTimeOffset.Now, force: true);
+        }
+
         var parent = restartIndex.GetParent(processId);
 
         if (parent is null)
@@ -150,6 +173,36 @@ internal sealed class SystemTelemetryCollector : IDisposable
 
     private static bool IsKillablePid(int processId) =>
         processId > 4 && processId != Environment.ProcessId;
+
+    private GpuProcessMemorySnapshot ReadGpuSnapshot(DateTimeOffset now, bool force = false)
+    {
+        if (!force
+            && _lastGpuSnapshot is not null
+            && now - _lastGpuSnapshotAt < GpuProcessRefreshInterval)
+        {
+            return _lastGpuSnapshot;
+        }
+
+        var snapshot = _gpuMemoryReader.Read();
+        _lastGpuSnapshot = snapshot;
+        _lastGpuSnapshotAt = now;
+        return snapshot;
+    }
+
+    private ProcessRestartIndex ReadRestartIndex(DateTimeOffset now, bool force = false)
+    {
+        if (!force
+            && _lastRestartIndex is not null
+            && now - _lastRestartIndexAt < RestartIndexRefreshInterval)
+        {
+            return _lastRestartIndex;
+        }
+
+        var index = ProcessRestartIndex.Read();
+        _lastRestartIndex = index;
+        _lastRestartIndexAt = now;
+        return index;
+    }
 
     public KillProcessResponse ControlService(string serviceName, ServiceControlAction action)
     {
