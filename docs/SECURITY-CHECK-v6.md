@@ -1,19 +1,19 @@
 # VRAM Vue v6 Security Check
 
-Date: 2026-06-05
-Version: 6.0.0
-Installer: `dist\VRAMVue-Setup-v6.0.0-win-x64.msi`
-Portable: `dist\VRAMVue-Portable-v6.0.0-win-x64.zip`
+Date: 2026-06-06
+Version: 6.0.3
+Installer: `dist\VRAMVue-Setup-v6.0.3-win-x64.msi`
+Portable: `dist\VRAMVue-Portable-v6.0.3-win-x64.zip`
 
 ## Summary
 
-No vulnerable or deprecated NuGet packages were reported by the current configured NuGet source. A lightweight secret scan found code-level password/token identifiers but no committed credentials or private keys. WiX MSI validation passed after correcting the Start Menu shortcut component scope. The distribution build now produces both a self-contained MSI and a self-contained portable zip.
+No vulnerable or deprecated NuGet packages were reported by the current configured NuGet source. A lightweight secret scan found code-level password/token identifiers but no committed credentials or private keys. WiX MSI validation passed. The distribution build produces both a self-contained MSI and a self-contained portable zip, and settings exports now use password-based AES-256-GCM encryption.
 
 ## Artifact Hashes
 
 ```text
-VRAMVue-Setup-v6.0.0-win-x64.msi     DCF9ABB82A9CE3EF5B9B7D9B95A4D8F9B912DC4CE9DAE953F870F44515507905
-VRAMVue-Portable-v6.0.0-win-x64.zip  A931E731E1F6FACFBDCA1DB3A9D8EDCD6CFE561B2D0B1FF5787D97AED74B663A
+VRAMVue-Setup-v6.0.3-win-x64.msi     029F1E1D785180ACCB71A55770EAD8065F1804384514DEB63D1508B5D0F7FB78
+VRAMVue-Portable-v6.0.3-win-x64.zip  5C26586C15195F0F89EE5217700A2E3D2CAD77A967AF6B7362621E71BF3B845C
 ```
 
 ## Commands Run
@@ -23,9 +23,9 @@ dotnet list .\VramOp.csproj package --vulnerable --include-transitive
 dotnet list .\VramOp.csproj package --deprecated
 dotnet restore .\VramOp.csproj /p:NuGetAudit=true /p:NuGetAuditMode=all
 dotnet list .\VramOp.csproj package --outdated
-rg -n --hidden -S "(password\s*=|ProtectedPassword|BEGIN (RSA|OPENSSH|PRIVATE) KEY|ghp_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|AKIA[0-9A-Z]{16}|client_secret|api[_-]?key|token\s*=)" C:\git\vram-op -g "!bin/**" -g "!obj/**" -g "!.git/**"
-.\scripts\Build-Msi.ps1 -Version 6.0.0
-wix msi validate .\dist\VRAMVue-Setup-v6.0.0-win-x64.msi
+rg -n --hidden -S "(password\s*=|ProtectedPassword|BEGIN (RSA|OPENSSH|PRIVATE) KEY|ghp_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|AKIA[0-9A-Z]{16}|client_secret|api[_-]?key|token\s*=)" . -g "!bin/**" -g "!obj/**" -g "!artifacts/**" -g "!dist/**" -g "!**/.git/**"
+.\scripts\Build-Msi.ps1 -Version 6.0.3
+wix msi validate .\dist\VRAMVue-Setup-v6.0.3-win-x64.msi
 ```
 
 ## Results
@@ -38,14 +38,16 @@ wix msi validate .\dist\VRAMVue-Setup-v6.0.0-win-x64.msi
 - MSI validation: passed.
 - Portable zip build: passed.
 
-## Hardening Change
+## Hardening Changes
 
-Freshly created listener certificates are now persisted as non-exportable current-user keys. Existing certificates are not rewritten automatically; deleting the old `VRAM Vue Local Telemetry` certificate from the current-user certificate store allows the app to create a new non-exportable one.
+- Freshly created listener certificates are persisted as non-exportable current-user keys. Existing certificates are not rewritten automatically; deleting the old `VRAM Vue Local Telemetry` certificate from the current-user certificate store allows the app to create a new non-exportable one.
+- Settings exports decrypt local DPAPI-protected credentials in memory, then write a portable settings file encrypted with PBKDF2-SHA256 and AES-256-GCM.
 
 ## Residual Risks
 
 - First certificate pinning is trust-on-first-use. Use trusted networks and verify host/IP identity before entering credentials.
 - Basic auth credentials are protected by TLS 1.3 in transit and DPAPI at rest, but should still be unique and strong.
+- Exported settings are only as strong as the chosen export password.
 - Authenticated remote clients can kill processes and control associated Windows services. Do not expose the listener port to untrusted networks.
 
 ## Maximus Runtime Diagnosis

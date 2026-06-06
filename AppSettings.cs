@@ -16,6 +16,7 @@ internal sealed class AppSettings
     public int MonitorWindowOpacityPercent { get; set; } = 95;
     public bool ConfirmTaskKills { get; set; } = true;
     public List<RemoteHostConfig> RemoteHosts { get; set; } = [];
+    public Dictionary<string, string> ThemeColors { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public string GetPassword() => SettingsProtector.Unprotect(ProtectedPassword);
 

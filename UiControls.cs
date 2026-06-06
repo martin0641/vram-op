@@ -6,17 +6,139 @@ namespace VramOp;
 
 internal static class AppTheme
 {
-    public static readonly Color Background = Color.FromArgb(13, 17, 23);
-    public static readonly Color Surface = Color.FromArgb(22, 27, 34);
-    public static readonly Color SurfaceRaised = Color.FromArgb(30, 36, 46);
-    public static readonly Color Border = Color.FromArgb(48, 56, 70);
-    public static readonly Color Text = Color.FromArgb(235, 241, 247);
-    public static readonly Color MutedText = Color.FromArgb(145, 156, 172);
-    public static readonly Color Accent = Color.FromArgb(88, 166, 255);
-    public static readonly Color Good = Color.FromArgb(69, 214, 136);
-    public static readonly Color Warning = Color.FromArgb(255, 197, 92);
-    public static readonly Color Danger = Color.FromArgb(255, 107, 107);
+    public static readonly IReadOnlyList<ThemeColorSlot> ColorSlots =
+    [
+        new("Background", "Background", Color.FromArgb(13, 17, 23)),
+        new("Surface", "Surface", Color.FromArgb(22, 27, 34)),
+        new("SurfaceRaised", "Raised", Color.FromArgb(30, 36, 46)),
+        new("Text", "Text", Color.FromArgb(235, 241, 247)),
+        new("Accent", "CPU/accent", Color.FromArgb(88, 166, 255)),
+        new("Good", "RAM", Color.FromArgb(69, 214, 136)),
+        new("Warning", "GPU", Color.FromArgb(255, 197, 92)),
+        new("Danger", "VRAM", Color.FromArgb(255, 107, 107))
+    ];
+
+    public static Color Background { get; private set; } = GetDefaultColor("Background");
+    public static Color Surface { get; private set; } = GetDefaultColor("Surface");
+    public static Color SurfaceRaised { get; private set; } = GetDefaultColor("SurfaceRaised");
+    public static Color Border { get; private set; } = Color.FromArgb(48, 56, 70);
+    public static Color Text { get; private set; } = GetDefaultColor("Text");
+    public static Color MutedText { get; private set; } = Color.FromArgb(145, 156, 172);
+    public static Color Accent { get; private set; } = GetDefaultColor("Accent");
+    public static Color Good { get; private set; } = GetDefaultColor("Good");
+    public static Color Warning { get; private set; } = GetDefaultColor("Warning");
+    public static Color Danger { get; private set; } = GetDefaultColor("Danger");
+
+    public static void Apply(IReadOnlyDictionary<string, string>? colors)
+    {
+        Reset();
+        if (colors is null)
+        {
+            return;
+        }
+
+        foreach (var (key, value) in colors)
+        {
+            if (TryParseHex(value, out var color))
+            {
+                SetColor(key, color);
+            }
+        }
+    }
+
+    public static void SetColor(string key, Color color)
+    {
+        key = ColorSlots.FirstOrDefault(item => string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase))?.Key ?? key;
+        switch (key)
+        {
+            case "Background":
+                Background = color;
+                break;
+            case "Surface":
+                Surface = color;
+                break;
+            case "SurfaceRaised":
+                SurfaceRaised = color;
+                break;
+            case "Text":
+                Text = color;
+                break;
+            case "Accent":
+                Accent = color;
+                break;
+            case "Good":
+                Good = color;
+                break;
+            case "Warning":
+                Warning = color;
+                break;
+            case "Danger":
+                Danger = color;
+                break;
+        }
+
+        Border = Mix(SurfaceRaised, Text, 0.16);
+        MutedText = Mix(Text, Surface, 0.58);
+    }
+
+    public static Color GetColor(string key) =>
+        key switch
+        {
+            "Background" => Background,
+            "Surface" => Surface,
+            "SurfaceRaised" => SurfaceRaised,
+            "Text" => Text,
+            "Accent" => Accent,
+            "Good" => Good,
+            "Warning" => Warning,
+            "Danger" => Danger,
+            _ => GetDefaultColor(key)
+        };
+
+    public static string ToHex(Color color) => $"#{color.R:X2}{color.G:X2}{color.B:X2}";
+
+    private static void Reset()
+    {
+        Background = GetDefaultColor("Background");
+        Surface = GetDefaultColor("Surface");
+        SurfaceRaised = GetDefaultColor("SurfaceRaised");
+        Text = GetDefaultColor("Text");
+        Accent = GetDefaultColor("Accent");
+        Good = GetDefaultColor("Good");
+        Warning = GetDefaultColor("Warning");
+        Danger = GetDefaultColor("Danger");
+        Border = Color.FromArgb(48, 56, 70);
+        MutedText = Color.FromArgb(145, 156, 172);
+    }
+
+    private static Color GetDefaultColor(string key) =>
+        ColorSlots.FirstOrDefault(item => string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase))?.DefaultColor
+        ?? Color.FromArgb(22, 27, 34);
+
+    private static bool TryParseHex(string value, out Color color)
+    {
+        value = value.Trim().TrimStart('#');
+        if (value.Length != 6 || !int.TryParse(value, System.Globalization.NumberStyles.HexNumber, null, out var rgb))
+        {
+            color = Color.Empty;
+            return false;
+        }
+
+        color = Color.FromArgb((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+        return true;
+    }
+
+    private static Color Mix(Color foreground, Color background, double amount)
+    {
+        amount = Math.Clamp(amount, 0, 1);
+        return Color.FromArgb(
+            (int)Math.Round(foreground.R * amount + background.R * (1 - amount)),
+            (int)Math.Round(foreground.G * amount + background.G * (1 - amount)),
+            (int)Math.Round(foreground.B * amount + background.B * (1 - amount)));
+    }
 }
+
+internal sealed record ThemeColorSlot(string Key, string Label, Color DefaultColor);
 
 internal static class NativeWindowStyler
 {
@@ -401,6 +523,71 @@ internal sealed class RoundedButton : Button
     }
 }
 
+internal sealed class ColorSwatchButton : Button
+{
+    private bool _hovered;
+
+    public Color SwatchColor { get; set; } = AppTheme.Accent;
+
+    public Color BorderColor { get; set; } = AppTheme.Border;
+
+    public Color BackdropColor { get; set; } = AppTheme.Surface;
+
+    public Color RingColor { get; set; } = AppTheme.Text;
+
+    public ColorSwatchButton()
+    {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+        FlatStyle = FlatStyle.Flat;
+        FlatAppearance.BorderSize = 0;
+        BackColor = Color.Transparent;
+        Cursor = Cursors.Hand;
+        Size = new Size(36, 36);
+        Margin = new Padding(0, 0, 10, 10);
+        TabStop = true;
+    }
+
+    protected override void OnMouseEnter(EventArgs e)
+    {
+        _hovered = true;
+        Invalidate();
+        base.OnMouseEnter(e);
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        _hovered = false;
+        Invalidate();
+        base.OnMouseLeave(e);
+    }
+
+    protected override void OnPaint(PaintEventArgs pevent)
+    {
+        pevent.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var backdrop = new SolidBrush(Parent?.BackColor ?? BackdropColor);
+        pevent.Graphics.FillRectangle(backdrop, ClientRectangle);
+
+        var circleSize = Math.Min(ClientSize.Width, ClientSize.Height) - 8;
+        var rect = new Rectangle(
+            (ClientSize.Width - circleSize) / 2,
+            (ClientSize.Height - circleSize) / 2,
+            circleSize,
+            circleSize);
+
+        using var fill = new SolidBrush(SwatchColor);
+        using var border = new Pen(BorderColor, _hovered || Focused ? 2 : 1);
+        pevent.Graphics.FillEllipse(fill, rect);
+        pevent.Graphics.DrawEllipse(border, rect);
+
+        if (_hovered || Focused)
+        {
+            var focusRect = Rectangle.Inflate(rect, 4, 4);
+            using var ring = new Pen(Color.FromArgb(120, RingColor), 1);
+            pevent.Graphics.DrawEllipse(ring, focusRect);
+        }
+    }
+}
+
 internal sealed class MetricCard : Control
 {
     private readonly System.Windows.Forms.Timer _animationTimer;
@@ -680,6 +867,7 @@ internal sealed class HostCard : Control
 
     public bool IsSelected { get; set; }
     public bool UseCompactMemoryValues { get; set; }
+    public bool ShowResizeGrip { get; set; }
 
     public int SmoothingDurationMs
     {
@@ -743,7 +931,8 @@ internal sealed class HostCard : Control
         e.Graphics.FillRectangle(backdrop, ClientRectangle);
 
         using var path = RoundedPath(rect, 16);
-        using var fill = new SolidBrush(IsSelected ? Color.FromArgb(30, 42, 59) : AppTheme.Surface);
+        var fillColor = IsSelected ? Color.FromArgb(30, 42, 59) : AppTheme.Surface;
+        using var fill = new SolidBrush(fillColor);
         using var border = new Pen(IsSelected ? AppTheme.Accent : AppTheme.Border, IsSelected ? 2 : 1);
         e.Graphics.FillPath(fill, path);
         e.Graphics.DrawPath(border, path);
@@ -763,6 +952,11 @@ internal sealed class HostCard : Control
         DrawMetricLine(e.Graphics, "RAM", _ramRatio.Display, MemoryLine(snapshot.RamUsedBytes, snapshot.RamTotalBytes), y + lineHeight, lineHeight, AppTheme.Good);
         DrawMetricLine(e.Graphics, "GPU", _gpuRatio.Display, Formatters.Percent(snapshot.GpuPercent), y + lineHeight * 2, lineHeight, AppTheme.Warning);
         DrawMetricLine(e.Graphics, "VRAM", _vramRatio.Display, MemoryLine(snapshot.VramUsedBytes, snapshot.VramTotalBytes), y + lineHeight * 3, lineHeight, AppTheme.Danger);
+
+        if (ShowResizeGrip)
+        {
+            DrawResizeGrip(e.Graphics, rect, fillColor);
+        }
     }
 
     private void UpdateRatioTargets()
@@ -871,6 +1065,33 @@ internal sealed class HostCard : Control
 
         var valueRect = new Rectangle(barRect.Right + 8, y, Width - barRect.Right - left - 8, lineHeight);
         TextRenderer.DrawText(graphics, value, Font, valueRect, AppTheme.Text, TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+    }
+
+    private void DrawResizeGrip(Graphics graphics, Rectangle bounds, Color baseColor)
+    {
+        var size = Math.Max(18, Font.Height + 8);
+        var inset = Math.Max(3, Font.Height / 4);
+        var right = bounds.Right - inset;
+        var bottom = bounds.Bottom - inset;
+        var points = new[]
+        {
+            new Point(right - size, bottom),
+            new Point(right, bottom - size),
+            new Point(right, bottom)
+        };
+
+        using var fill = new SolidBrush(Darken(baseColor, 0.76));
+        graphics.FillPolygon(fill, points);
+    }
+
+    private static Color Darken(Color color, double amount)
+    {
+        amount = Math.Clamp(amount, 0, 1);
+        return Color.FromArgb(
+            color.A,
+            (int)Math.Round(color.R * amount),
+            (int)Math.Round(color.G * amount),
+            (int)Math.Round(color.B * amount));
     }
 
     private static GraphicsPath RoundedPath(Rectangle bounds, int radius)

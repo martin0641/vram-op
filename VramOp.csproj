@@ -11,10 +11,10 @@
     <Title>VRAM Vue</Title>
     <ApplicationIcon>Assets\VramOp.ico</ApplicationIcon>
     <Authors>Martin (martin0641)</Authors>
-    <Version>6.0.2</Version>
-    <AssemblyVersion>6.0.2.0</AssemblyVersion>
-    <FileVersion>6.0.2.0</FileVersion>
-    <InformationalVersion>6.0.2</InformationalVersion>
+    <Version>6.0.3</Version>
+    <AssemblyVersion>6.0.3.0</AssemblyVersion>
+    <FileVersion>6.0.3.0</FileVersion>
+    <InformationalVersion>6.0.3</InformationalVersion>
     <Description>VRAM Vue is a Windows VRAM and GPU memory dashboard for monitoring and freeing memory across PCs.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/martin0641/vram-op</PackageProjectUrl>

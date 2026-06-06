@@ -24,6 +24,7 @@ internal sealed class HostMonitorForm : Form
         Dock = DockStyle.Fill,
         IsSelected = true,
         Margin = Padding.Empty,
+        ShowResizeGrip = true,
         UseCompactMemoryValues = true
     };
 

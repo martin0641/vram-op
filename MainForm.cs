@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Security.Authentication;
+using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace VramOp;
 
@@ -20,6 +22,7 @@ internal sealed class MainForm : Form
     private readonly Dictionary<Guid, HostMonitorForm> _monitorWindows = [];
     private readonly BindingSource _processBinding = new();
     private readonly NotifyIcon _notifyIcon = new();
+    private readonly ToolTip _toolTip = new();
     private readonly Icon _appIcon;
 
     private readonly Panel _dashboardPage = new BufferedPanel();
@@ -39,7 +42,7 @@ internal sealed class MainForm : Form
     private readonly Label _titleLabel = new BufferedLabel();
     private readonly Label _statusLabel = new BufferedLabel();
     private readonly Label _listenerStatusLabel = new BufferedLabel();
-    private readonly MaskedTextBox _intervalBox = new("9999");
+    private readonly NumericUpDown _intervalBox = new();
     private readonly NumericUpDown _barSmoothingBox = new();
     private readonly RoundedButton _killButton = new() { Text = "Kill selected", Width = 132 };
     private readonly RoundedButton _killParentButton = new() { Text = "End parent", Width = 124, Visible = false };
@@ -58,16 +61,19 @@ internal sealed class MainForm : Form
     private readonly NumericUpDown _monitorOpacityBox = new();
     private readonly TextBox _listenerUserBox = new();
     private readonly TextBox _listenerPasswordBox = new();
-    private readonly ListBox _remoteListBox = new();
+    private readonly BufferedFlowLayoutPanel _remotePillsPanel = new();
     private readonly TextBox _remoteNameBox = new();
     private readonly TextBox _remoteHostBox = new();
     private readonly NumericUpDown _remotePortBox = new();
     private readonly TextBox _remoteUserBox = new();
     private readonly TextBox _remotePasswordBox = new();
     private readonly TextBox _remoteThumbprintBox = new();
+    private readonly TextBox _settingsTransferPasswordBox = new();
+    private readonly BufferedFlowLayoutPanel _themeSwatchesPanel = new();
 
     private Guid _localHostId = Guid.Empty;
     private Guid? _selectedHostId;
+    private Guid? _selectedRemoteHostId;
     private bool _exitRequested;
     private int _refreshInProgress;
     private bool _hasShownTrayTip;
@@ -75,6 +81,7 @@ internal sealed class MainForm : Form
     private bool _isMovingOrSizing;
     private int _openContextMenuCount;
     private bool _updatingProcessRows;
+    private bool _loadingSettingsControls;
     private Guid? _lastRenderedProcessHostId;
     private string _lastRenderedProcessSignature = string.Empty;
     private string _lastStatusText = string.Empty;
@@ -87,6 +94,9 @@ internal sealed class MainForm : Form
     public MainForm()
     {
         _settings = SettingsStore.Load();
+        _settings.RemoteHosts ??= [];
+        _settings.ThemeColors ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        AppTheme.Apply(_settings.ThemeColors);
         _server = new TelemetryServer(_collector);
         _appIcon = AppIconFactory.CreateIcon();
 
@@ -116,6 +126,7 @@ internal sealed class MainForm : Form
 
             _monitorWindows.Clear();
             _notifyIcon.Dispose();
+            _toolTip.Dispose();
             _appIcon.Dispose();
             _collector.Dispose();
             _server.StopAsync().GetAwaiter().GetResult();
@@ -128,6 +139,7 @@ internal sealed class MainForm : Form
     {
         Text = AppDisplayName;
         Icon = _appIcon;
+        ApplyThemePaletteToStaticControls();
         BackColor = AppTheme.Background;
         ForeColor = AppTheme.Text;
         Font = new Font("Segoe UI", 9F);
@@ -654,33 +666,43 @@ internal sealed class MainForm : Form
         _settingsContent.Dock = DockStyle.Top;
         _settingsContent.AutoSize = true;
         _settingsContent.ColumnCount = 2;
-        _settingsContent.RowCount = 1;
+        _settingsContent.RowCount = 2;
         _settingsContent.BackColor = AppTheme.Background;
         _settingsContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         _settingsContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        _settingsContent.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        _settingsContent.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-        _settingsContent.Controls.Add(BuildLocalSettingsColumn(), 0, 0);
+        _settingsContent.Controls.Add(BuildListenerSettings(), 0, 0);
         _settingsContent.Controls.Add(BuildRemoteSettings(), 1, 0);
+        _settingsContent.Controls.Add(BuildMonitorAndTransferSettings(), 0, 1);
+        _settingsContent.Controls.Add(BuildThemeSettings(), 1, 1);
         scroll.Controls.Add(_settingsContent);
         _settingsPage.Controls.Add(scroll);
     }
 
-    private Control BuildLocalSettingsColumn()
+    private Control BuildMonitorAndTransferSettings()
     {
-        var column = new TableLayoutPanel
+        var row = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
             AutoSize = true,
-            ColumnCount = 1,
-            RowCount = 2,
+            ColumnCount = 2,
+            RowCount = 1,
+            Margin = new Padding(0, 12, 12, 0),
             BackColor = AppTheme.Background
         };
-        column.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        column.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        column.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        column.Controls.Add(BuildListenerSettings(), 0, 0);
-        column.Controls.Add(BuildMonitorSettings(), 0, 1);
-        return column;
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        row.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+        var monitor = BuildMonitorSettings();
+        var transfer = BuildSettingsTransferSettings();
+        monitor.Margin = new Padding(0, 0, 6, 0);
+        transfer.Margin = new Padding(6, 0, 0, 0);
+        row.Controls.Add(monitor, 0, 0);
+        row.Controls.Add(transfer, 1, 0);
+        return row;
     }
 
     private Control BuildListenerSettings()
@@ -722,6 +744,7 @@ internal sealed class MainForm : Form
         _listenerPortBox.Maximum = 65535;
         _listenerPortBox.BackColor = AppTheme.SurfaceRaised;
         _listenerPortBox.ForeColor = AppTheme.Text;
+        _listenerPortBox.TextAlign = HorizontalAlignment.Left;
         _barSmoothingBox.Minimum = 0;
         _barSmoothingBox.Maximum = MaxBarSmoothingMs;
         _barSmoothingBox.Increment = 50;
@@ -729,8 +752,10 @@ internal sealed class MainForm : Form
         _barSmoothingBox.ForeColor = AppTheme.Text;
         _listenerUserBox.BackColor = AppTheme.SurfaceRaised;
         _listenerUserBox.ForeColor = AppTheme.Text;
+        _listenerUserBox.TextAlign = HorizontalAlignment.Left;
         _listenerPasswordBox.BackColor = AppTheme.SurfaceRaised;
         _listenerPasswordBox.ForeColor = AppTheme.Text;
+        _listenerPasswordBox.TextAlign = HorizontalAlignment.Left;
         _listenerPasswordBox.UseSystemPasswordChar = true;
         ConfigureTextInput(_listenerUserBox, 64, InputRules.IsBasicAuthUsernameChar, InputRules.NormalizeBasicAuthUsername);
         ConfigureTextInput(_listenerPasswordBox, 128, InputRules.IsPasswordChar, InputRules.NormalizePassword);
@@ -782,30 +807,115 @@ internal sealed class MainForm : Form
         return panel;
     }
 
+    private Control BuildSettingsTransferSettings()
+    {
+        var panel = new RoundedPanel
+        {
+            Dock = DockStyle.Top,
+            BackColor = AppTheme.Surface,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(0, 0)
+        };
+
+        var layout = CreateSettingsLayout();
+        AddSectionTitle(layout, "Settings transfer", 0);
+
+        _settingsTransferPasswordBox.BackColor = AppTheme.SurfaceRaised;
+        _settingsTransferPasswordBox.ForeColor = AppTheme.Text;
+        _settingsTransferPasswordBox.BorderStyle = BorderStyle.FixedSingle;
+        _settingsTransferPasswordBox.PlaceholderText = " Required password";
+        _settingsTransferPasswordBox.UseSystemPasswordChar = true;
+        _settingsTransferPasswordBox.TextAlign = HorizontalAlignment.Left;
+        ConfigureTextInput(_settingsTransferPasswordBox, 128, InputRules.IsPasswordChar, InputRules.NormalizePassword);
+        AddLabeledControl(layout, "Password", _settingsTransferPasswordBox, 1);
+
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false,
+            BackColor = AppTheme.Surface
+        };
+        var importButton = new RoundedButton { Text = "Import", Width = 88 };
+        var exportButton = new RoundedButton { Text = "Export", Width = 88 };
+        importButton.Click += async (_, _) => await ImportSettingsAsync();
+        exportButton.Click += (_, _) => ExportSettings();
+        buttons.Controls.Add(importButton);
+        buttons.Controls.Add(exportButton);
+        SetSettingsRowHeight(layout, 2, ButtonRowHeight(exportButton));
+        layout.Controls.Add(buttons, 0, 2);
+        layout.SetColumnSpan(buttons, 2);
+
+        var note = CreateNoteLabel("Exports use AES-256-GCM with a password so host credentials can move safely between PCs.");
+        SetSettingsRowAutoSize(layout, 3);
+        layout.Controls.Add(note, 0, 3);
+        layout.SetColumnSpan(note, 2);
+
+        panel.Controls.Add(layout);
+        return panel;
+    }
+
+    private Control BuildThemeSettings()
+    {
+        var panel = new RoundedPanel
+        {
+            Dock = DockStyle.Top,
+            Margin = new Padding(12, 12, 0, 0),
+            BackColor = AppTheme.Surface,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(0, 0)
+        };
+
+        var layout = CreateSettingsLayout();
+        AddSectionTitle(layout, "Theme colors", 0);
+
+        _themeSwatchesPanel.Dock = DockStyle.Top;
+        _themeSwatchesPanel.AutoSize = true;
+        _themeSwatchesPanel.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        _themeSwatchesPanel.FlowDirection = FlowDirection.LeftToRight;
+        _themeSwatchesPanel.WrapContents = true;
+        _themeSwatchesPanel.AutoScroll = false;
+        _themeSwatchesPanel.MinimumSize = new Size(0, 48);
+        _themeSwatchesPanel.Padding = new Padding(0, 4, 0, 0);
+        _themeSwatchesPanel.BackColor = AppTheme.Surface;
+
+        SetSettingsRowAutoSize(layout, 1);
+        layout.Controls.Add(_themeSwatchesPanel, 0, 1);
+        layout.SetColumnSpan(_themeSwatchesPanel, 2);
+
+        panel.Controls.Add(layout);
+        RefreshThemeSwatches();
+        return panel;
+    }
+
     private Control CreateIntervalEditor()
     {
         var panel = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.None,
             ColumnCount = 2,
             RowCount = 1,
+            Height = SettingsInputHeight(_intervalBox),
             BackColor = AppTheme.Surface
         };
-        var digitWidth = Math.Max(68, TextRenderer.MeasureText("9999", _intervalBox.Font).Width + 24);
+        var digitWidth = Math.Max(76, TextRenderer.MeasureText("9999", _intervalBox.Font).Width + 34);
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, digitWidth));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Math.Max(42, TextRenderer.MeasureText("ms", Font).Width + 20)));
 
+        _intervalBox.Minimum = 250;
+        _intervalBox.Maximum = 9999;
+        _intervalBox.Increment = 50;
+        _intervalBox.DecimalPlaces = 0;
+        _intervalBox.ThousandsSeparator = false;
         _intervalBox.BackColor = AppTheme.SurfaceRaised;
         _intervalBox.ForeColor = AppTheme.Text;
         _intervalBox.BorderStyle = BorderStyle.FixedSingle;
-        _intervalBox.TextAlign = HorizontalAlignment.Right;
-        _intervalBox.PromptChar = ' ';
-        _intervalBox.HidePromptOnLeave = true;
-        _intervalBox.CutCopyMaskFormat = MaskFormat.ExcludePromptAndLiterals;
-        _intervalBox.TextMaskFormat = MaskFormat.ExcludePromptAndLiterals;
+        _intervalBox.TextAlign = HorizontalAlignment.Left;
         _intervalBox.Width = digitWidth - 10;
         _intervalBox.Dock = DockStyle.Left;
-        _intervalBox.Margin = new Padding(0, 7, 0, 7);
+        _intervalBox.Margin = new Padding(0, 2, 0, 2);
 
         var unitLabel = new Label
         {
@@ -818,6 +928,7 @@ internal sealed class MainForm : Form
 
         panel.Controls.Add(_intervalBox, 0, 0);
         panel.Controls.Add(unitLabel, 1, 0);
+        panel.Width = digitWidth + (int)panel.ColumnStyles[1].Width;
         return panel;
     }
 
@@ -825,20 +936,21 @@ internal sealed class MainForm : Form
     {
         var panel = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.None,
             ColumnCount = 2,
             RowCount = 1,
+            Height = SettingsInputHeight(_barSmoothingBox),
             BackColor = AppTheme.Surface
         };
-        var digitWidth = Math.Max(78, TextRenderer.MeasureText("6000", _barSmoothingBox.Font).Width + 34);
+        var digitWidth = Math.Max(76, TextRenderer.MeasureText("6000", _barSmoothingBox.Font).Width + 34);
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, digitWidth));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Math.Max(42, TextRenderer.MeasureText("ms", Font).Width + 20)));
 
         _barSmoothingBox.BorderStyle = BorderStyle.FixedSingle;
-        _barSmoothingBox.TextAlign = HorizontalAlignment.Right;
+        _barSmoothingBox.TextAlign = HorizontalAlignment.Left;
         _barSmoothingBox.Width = digitWidth - 10;
         _barSmoothingBox.Dock = DockStyle.Left;
-        _barSmoothingBox.Margin = new Padding(0, 7, 0, 7);
+        _barSmoothingBox.Margin = new Padding(0, 2, 0, 2);
 
         var unitLabel = new Label
         {
@@ -851,6 +963,7 @@ internal sealed class MainForm : Form
 
         panel.Controls.Add(_barSmoothingBox, 0, 0);
         panel.Controls.Add(unitLabel, 1, 0);
+        panel.Width = digitWidth + (int)panel.ColumnStyles[1].Width;
         return panel;
     }
 
@@ -858,9 +971,10 @@ internal sealed class MainForm : Form
     {
         var panel = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.None,
             ColumnCount = 2,
             RowCount = 1,
+            Height = SettingsInputHeight(_monitorOpacityBox),
             BackColor = AppTheme.Surface
         };
         var digitWidth = Math.Max(72, TextRenderer.MeasureText("100", _monitorOpacityBox.Font).Width + 34);
@@ -868,10 +982,10 @@ internal sealed class MainForm : Form
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Math.Max(40, TextRenderer.MeasureText("%", Font).Width + 20)));
 
         _monitorOpacityBox.BorderStyle = BorderStyle.FixedSingle;
-        _monitorOpacityBox.TextAlign = HorizontalAlignment.Right;
+        _monitorOpacityBox.TextAlign = HorizontalAlignment.Left;
         _monitorOpacityBox.Width = digitWidth - 10;
         _monitorOpacityBox.Dock = DockStyle.Left;
-        _monitorOpacityBox.Margin = new Padding(0, 7, 0, 7);
+        _monitorOpacityBox.Margin = new Padding(0, 2, 0, 2);
 
         var unitLabel = new Label
         {
@@ -884,6 +998,7 @@ internal sealed class MainForm : Form
 
         panel.Controls.Add(_monitorOpacityBox, 0, 0);
         panel.Controls.Add(unitLabel, 1, 0);
+        panel.Width = digitWidth + (int)panel.ColumnStyles[1].Width;
         return panel;
     }
 
@@ -900,15 +1015,20 @@ internal sealed class MainForm : Form
         };
 
         var layout = CreateSettingsLayout();
-        AddSectionTitle(layout, "Remote hosts", 0);
+        AddSectionTitle(layout, "Remote Hosts", 0);
 
-        _remoteListBox.Height = 140;
-        _remoteListBox.BackColor = AppTheme.SurfaceRaised;
-        _remoteListBox.ForeColor = AppTheme.Text;
-        _remoteListBox.BorderStyle = BorderStyle.FixedSingle;
-        SetSettingsRowHeight(layout, 1, Math.Max(132, Font.Height * 6));
-        layout.Controls.Add(_remoteListBox, 0, 1);
-        layout.SetColumnSpan(_remoteListBox, 2);
+        _remotePillsPanel.Dock = DockStyle.Top;
+        _remotePillsPanel.AutoSize = true;
+        _remotePillsPanel.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        _remotePillsPanel.FlowDirection = FlowDirection.LeftToRight;
+        _remotePillsPanel.WrapContents = true;
+        _remotePillsPanel.AutoScroll = false;
+        _remotePillsPanel.MinimumSize = new Size(0, 42);
+        _remotePillsPanel.Padding = new Padding(0, 4, 0, 0);
+        _remotePillsPanel.BackColor = AppTheme.Surface;
+        SetSettingsRowAutoSize(layout, 1);
+        layout.Controls.Add(_remotePillsPanel, 0, 1);
+        layout.SetColumnSpan(_remotePillsPanel, 2);
 
         AddLabeledControl(layout, "Name", _remoteNameBox, 2);
         AddLabeledControl(layout, "Host/IP", _remoteHostBox, 3);
@@ -920,17 +1040,22 @@ internal sealed class MainForm : Form
         _remotePortBox.Minimum = 1024;
         _remotePortBox.Maximum = 65535;
         _remotePortBox.Value = 54545;
+        _remotePortBox.BackColor = AppTheme.SurfaceRaised;
+        _remotePortBox.ForeColor = AppTheme.Text;
+        _remotePortBox.BorderStyle = BorderStyle.FixedSingle;
+        _remotePortBox.TextAlign = HorizontalAlignment.Left;
         _remotePasswordBox.UseSystemPasswordChar = true;
         foreach (var textBox in new[] { _remoteNameBox, _remoteHostBox, _remoteUserBox, _remotePasswordBox, _remoteThumbprintBox })
         {
             textBox.BackColor = AppTheme.SurfaceRaised;
             textBox.ForeColor = AppTheme.Text;
             textBox.BorderStyle = BorderStyle.FixedSingle;
+            textBox.TextAlign = HorizontalAlignment.Left;
         }
-        _remoteNameBox.PlaceholderText = "Required name";
-        _remoteHostBox.PlaceholderText = "Required host/IP";
-        _remoteUserBox.PlaceholderText = "Required username";
-        _remotePasswordBox.PlaceholderText = "Required password";
+        _remoteNameBox.PlaceholderText = " Required name";
+        _remoteHostBox.PlaceholderText = " Required host/IP";
+        _remoteUserBox.PlaceholderText = " Required username";
+        _remotePasswordBox.PlaceholderText = " Required password";
         ConfigureTextInput(_remoteNameBox, 64, InputRules.IsDisplayNameChar, InputRules.NormalizeDisplayName);
         ConfigureTextInput(_remoteHostBox, 253, InputRules.IsHostChar, InputRules.NormalizeHost);
         ConfigureTextInput(_remoteUserBox, 64, InputRules.IsBasicAuthUsernameChar, InputRules.NormalizeBasicAuthUsername);
@@ -947,12 +1072,15 @@ internal sealed class MainForm : Form
         var saveRemoteButton = new RoundedButton { Text = "Add/update", Width = 120 };
         var removeRemoteButton = new RoundedButton { Text = "Remove", Width = 92 };
         var clearPinButton = new RoundedButton { Text = "Clear pin", Width = 94 };
+        var newRemoteButton = new RoundedButton { Text = "New", Width = 70 };
         saveRemoteButton.Click += (_, _) => SaveRemoteHost();
         removeRemoteButton.Click += (_, _) => RemoveSelectedRemoteHost();
         clearPinButton.Click += (_, _) => _remoteThumbprintBox.Text = string.Empty;
+        newRemoteButton.Click += (_, _) => ClearRemoteEditor();
         buttons.Controls.Add(saveRemoteButton);
         buttons.Controls.Add(removeRemoteButton);
         buttons.Controls.Add(clearPinButton);
+        buttons.Controls.Add(newRemoteButton);
         SetSettingsRowHeight(layout, 8, ButtonRowHeight(saveRemoteButton));
         layout.Controls.Add(buttons, 0, 8);
         layout.SetColumnSpan(buttons, 2);
@@ -1017,13 +1145,36 @@ internal sealed class MainForm : Form
             TextAlign = ContentAlignment.MiddleLeft,
             AutoEllipsis = true
         };
-        control.Dock = DockStyle.Fill;
-        control.Margin = new Padding(0, 5, 0, 5);
-        control.MinimumSize = new Size(0, Math.Max(control.MinimumSize.Height, control.Font.Height + 12));
-        SetSettingsRowHeight(layout, row, Math.Max(50, Math.Max(labelControl.Font.Height, control.Font.Height) + 24));
+        var inputHeight = SettingsInputHeight(control);
+        var rowHeight = Math.Max(50, Math.Max(labelControl.Font.Height + 24, inputHeight + 16));
+        var verticalMargin = Math.Max(0, (rowHeight - inputHeight) / 2);
+        control.Dock = DockStyle.None;
+        control.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        control.Margin = new Padding(0, verticalMargin, 0, verticalMargin);
+        control.MinimumSize = new Size(0, Math.Max(control.MinimumSize.Height, inputHeight));
+        control.Height = Math.Max(control.Height, inputHeight);
+        if (control is TextBox textBox)
+        {
+            textBox.TextAlign = HorizontalAlignment.Left;
+        }
+
+        if (control is NumericUpDown numeric)
+        {
+            numeric.TextAlign = HorizontalAlignment.Left;
+        }
+
+        SetSettingsRowHeight(layout, row, rowHeight);
         layout.Controls.Add(labelControl, 0, row);
         layout.Controls.Add(control, 1, row);
     }
+
+    private static int SettingsInputHeight(Control control) =>
+        control switch
+        {
+            TextBox textBox => Math.Max(textBox.Font.Height + 16, 34),
+            NumericUpDown numeric => Math.Max(numeric.Font.Height + 18, 36),
+            _ => Math.Max(control.MinimumSize.Height, Math.Max(control.Font.Height + 16, 36))
+        };
 
     private static int CheckBoxRowHeight(CheckBox checkBox) =>
         Math.Max(34, checkBox.Font.Height + 14);
@@ -1098,7 +1249,14 @@ internal sealed class MainForm : Form
         };
 
         FormClosing += OnFormClosing;
-        _intervalBox.Leave += (_, _) => ApplyUpdateIntervalFromBox();
+        _intervalBox.ValueChanged += (_, _) =>
+        {
+            if (!_loadingSettingsControls)
+            {
+                ApplyUpdateIntervalFromBox(save: true);
+            }
+        };
+        _intervalBox.Leave += (_, _) => ApplyUpdateIntervalFromBox(save: true);
         _intervalBox.KeyDown += (_, args) =>
         {
             if (args.KeyCode != Keys.Enter)
@@ -1106,11 +1264,17 @@ internal sealed class MainForm : Form
                 return;
             }
 
-            ApplyUpdateIntervalFromBox();
+            ApplyUpdateIntervalFromBox(save: true);
             args.SuppressKeyPress = true;
         };
-        _intervalBox.Enter += (_, _) => _intervalBox.SelectAll();
-        _barSmoothingBox.ValueChanged += (_, _) => ApplyBarSmoothingFromBox(save: false);
+        _intervalBox.Enter += (_, _) => _intervalBox.Select(0, _intervalBox.Text.Length);
+        _barSmoothingBox.ValueChanged += (_, _) =>
+        {
+            if (!_loadingSettingsControls)
+            {
+                ApplyBarSmoothingFromBox(save: true);
+            }
+        };
         _barSmoothingBox.Leave += (_, _) => ApplyBarSmoothingFromBox(save: true);
         _monitorTopMostBox.CheckedChanged += (_, _) => ApplyMonitorWindowOptions(save: true);
         _monitorOpacityBox.ValueChanged += (_, _) => ApplyMonitorWindowOptions(save: true);
@@ -1122,7 +1286,6 @@ internal sealed class MainForm : Form
         _enableServiceButton.Click += async (_, _) => await ControlSelectedServiceAsync(ServiceControlAction.Enable);
         _dashboardButton.Click += (_, _) => ShowDashboardPage();
         _settingsButton.Click += (_, _) => ShowSettingsPage();
-        _remoteListBox.SelectedIndexChanged += (_, _) => PopulateRemoteEditorFromSelection();
         _processGrid.SelectionChanged += (_, _) =>
         {
             if (!_updatingProcessRows)
@@ -1134,64 +1297,74 @@ internal sealed class MainForm : Form
 
     private void LoadSettingsIntoControls()
     {
-        _settings.UpdateIntervalMs = Math.Clamp(_settings.UpdateIntervalMs, 250, 9999);
-        _settings.BarSmoothingMs = Math.Clamp(_settings.BarSmoothingMs, 0, MaxBarSmoothingMs);
-        _settings.MonitorWindowOpacityPercent = Math.Clamp(_settings.MonitorWindowOpacityPercent, 30, 100);
-        _intervalBox.Text = _settings.UpdateIntervalMs.ToString("0000");
-        _barSmoothingBox.Value = _settings.BarSmoothingMs;
-        _monitorTopMostBox.Checked = _settings.MonitorWindowsStayOnTop;
-        _monitorOpacityBox.Value = _settings.MonitorWindowOpacityPercent;
+        _loadingSettingsControls = true;
+        try
+        {
+            _settings.UpdateIntervalMs = Math.Clamp(_settings.UpdateIntervalMs, 250, 9999);
+            _settings.BarSmoothingMs = Math.Clamp(_settings.BarSmoothingMs, 0, MaxBarSmoothingMs);
+            _settings.MonitorWindowOpacityPercent = Math.Clamp(_settings.MonitorWindowOpacityPercent, 30, 100);
+            _intervalBox.Value = _settings.UpdateIntervalMs;
+            _barSmoothingBox.Value = _settings.BarSmoothingMs;
+            _monitorTopMostBox.Checked = _settings.MonitorWindowsStayOnTop;
+            _monitorOpacityBox.Value = _settings.MonitorWindowOpacityPercent;
 
-        _listenerEnabledBox.Checked = _settings.ListenerEnabled;
-        _confirmKillsBox.Checked = _settings.ConfirmTaskKills;
-        _listenerPortBox.Value = Math.Clamp(_settings.ListenerPort, 1024, 65535);
-        _listenerUserBox.Text = _settings.Username;
-        _listenerPasswordBox.Text = _settings.GetPassword();
+            _listenerEnabledBox.Checked = _settings.ListenerEnabled;
+            _confirmKillsBox.Checked = _settings.ConfirmTaskKills;
+            _listenerPortBox.Value = Math.Clamp(_settings.ListenerPort, 1024, 65535);
+            _listenerUserBox.Text = _settings.Username;
+            _listenerPasswordBox.Text = _settings.GetPassword();
+        }
+        finally
+        {
+            _loadingSettingsControls = false;
+        }
+
         ApplyBarSmoothingToControls();
         ApplyMonitorWindowOptionsToOpenWindows();
         RefreshRemoteList();
+        RefreshThemeSwatches();
     }
 
-    private void ApplyUpdateIntervalFromBox()
+    private void ApplyUpdateIntervalFromBox(bool save)
     {
-        var rawText = _intervalBox.Text.Trim();
-        if (!int.TryParse(rawText, out var interval))
-        {
-            interval = _settings.UpdateIntervalMs;
-        }
-
-        interval = Math.Clamp(interval, 250, 9999);
+        var interval = Math.Clamp((int)_intervalBox.Value, 250, 9999);
+        var changed = _settings.UpdateIntervalMs != interval;
         if (_settings.UpdateIntervalMs != interval)
         {
             _settings.UpdateIntervalMs = interval;
             RestartPolling();
-            SettingsStore.Save(_settings);
             SetStatusText($"Live telemetry - {_settings.UpdateIntervalMs:N0} ms updates");
         }
 
-        var formatted = interval.ToString("0000");
-        if (!string.Equals(_intervalBox.Text, formatted, StringComparison.Ordinal))
+        if (_intervalBox.Value != interval)
         {
-            _intervalBox.Text = formatted;
+            _intervalBox.Value = interval;
+        }
+
+        if (save && changed)
+        {
+            SettingsStore.Save(_settings);
         }
     }
 
     private void ApplyBarSmoothingFromBox(bool save)
     {
         var smoothingMs = Math.Clamp((int)_barSmoothingBox.Value, 0, MaxBarSmoothingMs);
-        if (_settings.BarSmoothingMs != smoothingMs)
+        var changed = _settings.BarSmoothingMs != smoothingMs;
+        if (changed)
         {
             _settings.BarSmoothingMs = smoothingMs;
             ApplyBarSmoothingToControls();
-            if (save)
-            {
-                SettingsStore.Save(_settings);
-            }
         }
 
         if (_barSmoothingBox.Value != smoothingMs)
         {
             _barSmoothingBox.Value = smoothingMs;
+        }
+
+        if (save && changed)
+        {
+            SettingsStore.Save(_settings);
         }
     }
 
@@ -1243,6 +1416,230 @@ internal sealed class MainForm : Form
         {
             window.ApplyOptions(_settings.MonitorWindowsStayOnTop, _settings.MonitorWindowOpacityPercent);
         }
+    }
+
+    private void ExportSettings()
+    {
+        var password = InputRules.NormalizePassword(_settingsTransferPasswordBox.Text);
+        if (string.IsNullOrEmpty(password))
+        {
+            MessageBox.Show(this, "Enter a password before exporting settings.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dialog = new SaveFileDialog
+        {
+            AddExtension = true,
+            DefaultExt = "vramvue",
+            FileName = "vram-vue-settings.vramvue",
+            Filter = "VRAM Vue settings (*.vramvue)|*.vramvue|All files (*.*)|*.*",
+            OverwritePrompt = true,
+            Title = "Export VRAM Vue settings"
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            SettingsPackage.Export(_settings, password, dialog.FileName);
+            MessageBox.Show(this, "Settings exported.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or CryptographicException)
+        {
+            MessageBox.Show(this, $"Settings export failed: {ex.Message}", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private async Task ImportSettingsAsync()
+    {
+        var password = InputRules.NormalizePassword(_settingsTransferPasswordBox.Text);
+        if (string.IsNullOrEmpty(password))
+        {
+            MessageBox.Show(this, "Enter the export password before importing settings.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dialog = new OpenFileDialog
+        {
+            CheckFileExists = true,
+            Filter = "VRAM Vue settings (*.vramvue)|*.vramvue|All files (*.*)|*.*",
+            Title = "Import VRAM Vue settings"
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            var imported = SettingsPackage.Import(dialog.FileName, password);
+            ApplyImportedSettings(imported);
+            AppTheme.Apply(_settings.ThemeColors);
+            SettingsStore.Save(_settings);
+            ApplyThemePaletteToStaticControls();
+            LoadSettingsIntoControls();
+            ApplyThemeToOpenSurfaces();
+            await RestartServerAsync();
+            _hostListDirty = true;
+            UpdateHostCards();
+            UpdateMonitorWindows();
+            RefreshSelectedHostView(forceProcessRefresh: true);
+            await RefreshAllHostsAsync();
+            MessageBox.Show(this, "Settings imported.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or JsonException or CryptographicException or ArgumentException or FormatException)
+        {
+            MessageBox.Show(this, $"Settings import failed: {ex.Message}", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void ApplyImportedSettings(AppSettings imported)
+    {
+        _settings.ListenerEnabled = imported.ListenerEnabled;
+        _settings.ListenerPort = imported.ListenerPort;
+        _settings.Username = imported.Username;
+        _settings.ProtectedPassword = imported.ProtectedPassword;
+        _settings.UpdateIntervalMs = imported.UpdateIntervalMs;
+        _settings.BarSmoothingMs = imported.BarSmoothingMs;
+        _settings.MonitorWindowsStayOnTop = imported.MonitorWindowsStayOnTop;
+        _settings.MonitorWindowOpacityPercent = imported.MonitorWindowOpacityPercent;
+        _settings.ConfirmTaskKills = imported.ConfirmTaskKills;
+        _settings.ThemeColors = new Dictionary<string, string>(imported.ThemeColors, StringComparer.OrdinalIgnoreCase);
+        _settings.RemoteHosts = imported.RemoteHosts;
+        _selectedRemoteHostId = null;
+    }
+
+    private void RefreshThemeSwatches()
+    {
+        if (_themeSwatchesPanel.IsDisposed)
+        {
+            return;
+        }
+
+        _themeSwatchesPanel.SuspendLayout();
+        _themeSwatchesPanel.Controls.Clear();
+        foreach (var slot in AppTheme.ColorSlots)
+        {
+            var swatch = new ColorSwatchButton
+            {
+                SwatchColor = AppTheme.GetColor(slot.Key),
+                BorderColor = AppTheme.Border,
+                BackdropColor = AppTheme.Surface,
+                RingColor = AppTheme.Text,
+                AccessibleName = slot.Label,
+                Tag = slot.Key
+            };
+            _toolTip.SetToolTip(swatch, $"{slot.Label}: {AppTheme.ToHex(AppTheme.GetColor(slot.Key))}");
+            swatch.Click += (_, _) => ChooseThemeColor(slot);
+            _themeSwatchesPanel.Controls.Add(swatch);
+        }
+
+        _themeSwatchesPanel.ResumeLayout();
+    }
+
+    private void ChooseThemeColor(ThemeColorSlot slot)
+    {
+        using var dialog = new ColorDialog
+        {
+            Color = AppTheme.GetColor(slot.Key),
+            FullOpen = true
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        AppTheme.SetColor(slot.Key, dialog.Color);
+        _settings.ThemeColors[slot.Key] = AppTheme.ToHex(dialog.Color);
+        SettingsStore.Save(_settings);
+        ApplyThemePaletteToStaticControls();
+        ApplyThemeToOpenSurfaces();
+        RefreshThemeSwatches();
+    }
+
+    private void ApplyThemePaletteToStaticControls()
+    {
+        _cpuCard.AccentColor = AppTheme.Accent;
+        _ramCard.AccentColor = AppTheme.Good;
+        _gpuCard.AccentColor = AppTheme.Warning;
+        _vramCard.AccentColor = AppTheme.Danger;
+
+        foreach (var button in new[]
+        {
+            _killButton,
+            _killParentButton,
+            _stopServiceButton,
+            _startServiceButton,
+            _disableServiceButton,
+            _enableServiceButton,
+            _dashboardButton,
+            _settingsButton,
+            _refreshButton,
+            _hideButton
+        })
+        {
+            button.ForeColor = AppTheme.Text;
+            button.FillColor = AppTheme.SurfaceRaised;
+            button.BorderColor = AppTheme.Border;
+        }
+    }
+
+    private void ApplyThemeToOpenSurfaces()
+    {
+        BackColor = AppTheme.Background;
+        ForeColor = AppTheme.Text;
+        _rootLayout.BackColor = AppTheme.Background;
+        _headerLayout.BackColor = AppTheme.Background;
+        _dashboardLayout.BackColor = AppTheme.Background;
+        _settingsContent.BackColor = AppTheme.Background;
+        _dashboardPage.BackColor = AppTheme.Background;
+        _settingsPage.BackColor = AppTheme.Background;
+        _hostCardsPanel.BackColor = AppTheme.Background;
+        _actionsPanel.BackColor = AppTheme.Background;
+        _titleLabel.ForeColor = AppTheme.Text;
+        _listenerStatusLabel.ForeColor = AppTheme.MutedText;
+        _statusLabel.ForeColor = AppTheme.MutedText;
+
+        _processGrid.BackgroundColor = AppTheme.Surface;
+        _processGrid.GridColor = AppTheme.Border;
+        _processGrid.ColumnHeadersDefaultCellStyle.BackColor = AppTheme.SurfaceRaised;
+        _processGrid.ColumnHeadersDefaultCellStyle.ForeColor = AppTheme.Text;
+        _processGrid.DefaultCellStyle.BackColor = AppTheme.Surface;
+        _processGrid.DefaultCellStyle.ForeColor = AppTheme.Text;
+        _processGrid.DefaultCellStyle.SelectionForeColor = AppTheme.Text;
+        _processGrid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(
+            Math.Min(255, AppTheme.Surface.R + 3),
+            Math.Min(255, AppTheme.Surface.G + 4),
+            Math.Min(255, AppTheme.Surface.B + 6));
+
+        if (_settingsPage.Visible)
+        {
+            ShowSettingsPage();
+        }
+        else
+        {
+            ShowDashboardPage();
+        }
+
+        foreach (var card in _hostCards.Values)
+        {
+            card.Invalidate();
+        }
+
+        foreach (var window in _monitorWindows.Values)
+        {
+            window.BackColor = AppTheme.Surface;
+            window.ForeColor = AppTheme.Text;
+            window.Invalidate(true);
+        }
+
+        NativeWindowStyler.ApplyDarkTitleBar(this);
+        Invalidate(true);
     }
 
     private bool IsUiInteractionPaused => _isMovingOrSizing || _openContextMenuCount > 0;
@@ -2016,7 +2413,7 @@ internal sealed class MainForm : Form
 
     private async Task SaveListenerSettingsAsync()
     {
-        ApplyUpdateIntervalFromBox();
+        ApplyUpdateIntervalFromBox(save: false);
         ApplyBarSmoothingFromBox(save: false);
         var username = InputRules.NormalizeBasicAuthUsername(_listenerUserBox.Text);
         var password = InputRules.NormalizePassword(_listenerPasswordBox.Text);
@@ -2070,7 +2467,9 @@ internal sealed class MainForm : Form
             return;
         }
 
-        var selected = _remoteListBox.SelectedItem as RemoteHostConfig;
+        var selected = _selectedRemoteHostId is null
+            ? null
+            : _settings.RemoteHosts.FirstOrDefault(item => item.Id == _selectedRemoteHostId.Value);
         var remote = selected ?? new RemoteHostConfig();
         remote.Name = name;
         remote.Host = host;
@@ -2084,6 +2483,7 @@ internal sealed class MainForm : Form
             _settings.RemoteHosts.Add(remote);
         }
 
+        _selectedRemoteHostId = remote.Id;
         SettingsStore.Save(_settings);
         _remoteNameBox.Text = name;
         _remoteHostBox.Text = host;
@@ -2095,13 +2495,20 @@ internal sealed class MainForm : Form
 
     private void RemoveSelectedRemoteHost()
     {
-        if (_remoteListBox.SelectedItem is not RemoteHostConfig remote)
+        if (_selectedRemoteHostId is null)
+        {
+            return;
+        }
+
+        var remote = _settings.RemoteHosts.FirstOrDefault(item => item.Id == _selectedRemoteHostId.Value);
+        if (remote is null)
         {
             return;
         }
 
         _settings.RemoteHosts.RemoveAll(item => item.Id == remote.Id);
         _hostSnapshots.Remove(remote.Id);
+        _selectedRemoteHostId = null;
         SettingsStore.Save(_settings);
         RefreshRemoteList();
         _hostListDirty = true;
@@ -2112,20 +2519,45 @@ internal sealed class MainForm : Form
 
     private void RefreshRemoteList()
     {
-        var selectedId = (_remoteListBox.SelectedItem as RemoteHostConfig)?.Id;
-        _remoteListBox.DisplayMember = nameof(RemoteHostConfig.DisplayName);
-        _remoteListBox.DataSource = null;
-        _remoteListBox.DataSource = _settings.RemoteHosts.ToList();
-
-        if (selectedId is not null)
+        if (_selectedRemoteHostId is not null && _settings.RemoteHosts.All(item => item.Id != _selectedRemoteHostId.Value))
         {
-            _remoteListBox.SelectedItem = _settings.RemoteHosts.FirstOrDefault(item => item.Id == selectedId.Value);
+            _selectedRemoteHostId = null;
         }
+
+        _remotePillsPanel.SuspendLayout();
+        _remotePillsPanel.Controls.Clear();
+        foreach (var remote in _settings.RemoteHosts.OrderBy(item => item.DisplayName))
+        {
+            var isSelected = remote.Id == _selectedRemoteHostId;
+            var button = new RoundedButton
+            {
+                Text = remote.DisplayName,
+                Width = Math.Clamp(TextRenderer.MeasureText(remote.DisplayName, Font).Width + 34, 88, 220),
+                Height = Math.Max(34, Font.Height + 16),
+                CornerRadius = 18,
+                FillColor = isSelected ? Color.FromArgb(37, 74, 119) : AppTheme.SurfaceRaised,
+                HoverColor = isSelected ? Color.FromArgb(48, 91, 144) : Color.FromArgb(39, 47, 61),
+                PressedColor = isSelected ? Color.FromArgb(29, 59, 96) : Color.FromArgb(48, 57, 73),
+                BorderColor = isSelected ? AppTheme.Accent : AppTheme.Border,
+                Margin = new Padding(0, 0, 8, 8),
+                Tag = remote.Id
+            };
+            button.Click += (_, _) =>
+            {
+                _selectedRemoteHostId = remote.Id;
+                RefreshRemoteList();
+            };
+            _remotePillsPanel.Controls.Add(button);
+        }
+
+        _remotePillsPanel.ResumeLayout();
+        PopulateRemoteEditorFromSelection();
     }
 
     private void PopulateRemoteEditorFromSelection()
     {
-        if (_remoteListBox.SelectedItem is not RemoteHostConfig remote)
+        if (_selectedRemoteHostId is null
+            || _settings.RemoteHosts.FirstOrDefault(item => item.Id == _selectedRemoteHostId.Value) is not { } remote)
         {
             _remoteNameBox.Text = string.Empty;
             _remoteHostBox.Text = string.Empty;
@@ -2142,6 +2574,12 @@ internal sealed class MainForm : Form
         _remoteUserBox.Text = remote.Username;
         _remotePasswordBox.Text = remote.GetPassword();
         _remoteThumbprintBox.Text = remote.TrustedCertificateThumbprint;
+    }
+
+    private void ClearRemoteEditor()
+    {
+        _selectedRemoteHostId = null;
+        RefreshRemoteList();
     }
 
     private void UpdateActionButtons()
