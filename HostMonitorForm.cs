@@ -1,3 +1,4 @@
+using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 
 namespace VramOp;
@@ -6,6 +7,7 @@ internal sealed class HostMonitorForm : Form
 {
     private const int WmNchitTest = 0x0084;
     private const int WmNclButtonDown = 0x00A1;
+    private const int WmExitSizeMove = 0x0232;
     private const int HtLeft = 10;
     private const int HtRight = 11;
     private const int HtTop = 12;
@@ -29,13 +31,16 @@ internal sealed class HostMonitorForm : Form
     private float _lastFontSize;
 
     public Guid HostId { get; }
+    public Func<HostMonitorForm, IEnumerable<Rectangle>>? SnapBoundsProvider { get; set; }
+    public event EventHandler? ContextMenuOpened;
+    public event EventHandler? ContextMenuClosed;
 
     public HostMonitorForm(Guid hostId, Icon icon)
     {
         HostId = hostId;
         Icon = icon;
         Text = "VRAM Vue monitor";
-        BackColor = AppTheme.Background;
+        BackColor = AppTheme.Surface;
         ForeColor = AppTheme.Text;
         Font = new Font("Segoe UI", 9F);
         AutoScaleMode = AutoScaleMode.Font;
@@ -46,16 +51,19 @@ internal sealed class HostMonitorForm : Form
         StartPosition = FormStartPosition.Manual;
         MinimumSize = new Size(280, 190);
         ClientSize = new Size(380, 238);
-        Padding = new Padding(6);
+        Padding = Padding.Empty;
         KeyPreview = true;
 
         _menu.Items.Add("Close", null, (_, _) => Close());
+        _menu.Opening += (_, _) => ContextMenuOpened?.Invoke(this, EventArgs.Empty);
+        _menu.Closed += (_, _) => ContextMenuClosed?.Invoke(this, EventArgs.Empty);
         ContextMenuStrip = _menu;
         _card.ContextMenuStrip = _menu;
         MouseDown += (_, args) => BeginMove(args);
         _card.MouseDown += (_, args) => BeginMove(args);
         Controls.Add(_card);
         UpdateCardScale();
+        UpdateRoundedRegion();
     }
 
     protected override void Dispose(bool disposing)
@@ -64,6 +72,9 @@ internal sealed class HostMonitorForm : Form
         {
             _menu.Dispose();
             _cardFont?.Dispose();
+            var region = Region;
+            Region = null;
+            region?.Dispose();
         }
 
         base.Dispose(disposing);
@@ -87,6 +98,13 @@ internal sealed class HostMonitorForm : Form
     {
         base.OnResize(e);
         UpdateCardScale();
+        UpdateRoundedRegion();
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        UpdateRoundedRegion();
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -114,6 +132,11 @@ internal sealed class HostMonitorForm : Form
         }
 
         base.WndProc(ref m);
+
+        if (m.Msg == WmExitSizeMove)
+        {
+            SnapToNearbyEdges();
+        }
     }
 
     private void BeginMove(MouseEventArgs args)
@@ -198,6 +221,135 @@ internal sealed class HostMonitorForm : Form
         _cardFont = new Font("Segoe UI", fontSize);
         _card.Font = _cardFont;
         previousFont?.Dispose();
+    }
+
+    private void UpdateRoundedRegion()
+    {
+        if (!IsHandleCreated || ClientSize.Width <= 0 || ClientSize.Height <= 0)
+        {
+            return;
+        }
+
+        if (WindowState == FormWindowState.Maximized)
+        {
+            var oldMaximizedRegion = Region;
+            Region = null;
+            oldMaximizedRegion?.Dispose();
+            return;
+        }
+
+        using var path = RoundedPath(new Rectangle(Point.Empty, ClientSize), ScaleForDpi(16));
+        var oldRegion = Region;
+        Region = new Region(path);
+        oldRegion?.Dispose();
+    }
+
+    private void SnapToNearbyEdges()
+    {
+        if (WindowState != FormWindowState.Normal)
+        {
+            return;
+        }
+
+        var bounds = Bounds;
+        var snapped = bounds.Location;
+        var threshold = ScaleForDpi(16);
+        var screen = Screen.FromRectangle(bounds);
+
+        snapped = SnapToRectangle(snapped, bounds.Size, screen.WorkingArea, threshold, adjacent: false);
+        snapped = SnapToRectangle(snapped, bounds.Size, screen.Bounds, threshold, adjacent: false);
+
+        if (SnapBoundsProvider is not null)
+        {
+            foreach (var target in SnapBoundsProvider(this))
+            {
+                if (target.Width <= 0 || target.Height <= 0 || target == bounds)
+                {
+                    continue;
+                }
+
+                snapped = SnapToRectangle(snapped, bounds.Size, target, threshold, adjacent: true);
+            }
+        }
+
+        if (snapped != bounds.Location)
+        {
+            Location = snapped;
+        }
+    }
+
+    private static Point SnapToRectangle(Point location, Size size, Rectangle target, int threshold, bool adjacent)
+    {
+        var left = location.X;
+        var top = location.Y;
+        var right = left + size.Width;
+        var bottom = top + size.Height;
+
+        if (Near(left, target.Left, threshold))
+        {
+            location.X = target.Left;
+        }
+        else if (Near(right, target.Right, threshold))
+        {
+            location.X = target.Right - size.Width;
+        }
+        else if (adjacent && RangesOverlap(top, bottom, target.Top, target.Bottom))
+        {
+            if (Near(left, target.Right, threshold))
+            {
+                location.X = target.Right;
+            }
+            else if (Near(right, target.Left, threshold))
+            {
+                location.X = target.Left - size.Width;
+            }
+        }
+
+        left = location.X;
+        top = location.Y;
+        right = left + size.Width;
+        bottom = top + size.Height;
+
+        if (Near(top, target.Top, threshold))
+        {
+            location.Y = target.Top;
+        }
+        else if (Near(bottom, target.Bottom, threshold))
+        {
+            location.Y = target.Bottom - size.Height;
+        }
+        else if (adjacent && RangesOverlap(left, right, target.Left, target.Right))
+        {
+            if (Near(top, target.Bottom, threshold))
+            {
+                location.Y = target.Bottom;
+            }
+            else if (Near(bottom, target.Top, threshold))
+            {
+                location.Y = target.Top - size.Height;
+            }
+        }
+
+        return location;
+    }
+
+    private static bool Near(int first, int second, int threshold) => Math.Abs(first - second) <= threshold;
+
+    private static bool RangesOverlap(int firstStart, int firstEnd, int secondStart, int secondEnd) =>
+        Math.Max(firstStart, secondStart) < Math.Min(firstEnd, secondEnd);
+
+    private int ScaleForDpi(int pixels) => Math.Max(1, (int)Math.Round(pixels * DeviceDpi / 96D));
+
+    private static GraphicsPath RoundedPath(Rectangle bounds, int radius)
+    {
+        var diameter = Math.Max(2, radius * 2);
+        var path = new GraphicsPath();
+        path.AddArc(bounds.Left, bounds.Top, diameter, diameter, 180, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Top, diameter, diameter, 270, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
+        path.AddArc(bounds.Left, bounds.Bottom - diameter, diameter, diameter, 90, 90);
+        path.CloseFigure();
+        return path;
     }
 
     [DllImport("user32.dll")]

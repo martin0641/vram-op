@@ -18,6 +18,50 @@ internal static class AppTheme
     public static readonly Color Danger = Color.FromArgb(255, 107, 107);
 }
 
+internal static class NativeWindowStyler
+{
+    private const int DwmwaUseImmersiveDarkMode = 20;
+    private const int DwmwaUseImmersiveDarkModeBefore20h1 = 19;
+    private const int DwmwaCaptionColor = 35;
+    private const int DwmwaTextColor = 36;
+
+    public static void ApplyDarkTitleBar(Form form)
+    {
+        if (!OperatingSystem.IsWindows() || !form.IsHandleCreated)
+        {
+            return;
+        }
+
+        var enabled = 1;
+        _ = DwmSetWindowAttribute(form.Handle, DwmwaUseImmersiveDarkMode, ref enabled, sizeof(int));
+        _ = DwmSetWindowAttribute(form.Handle, DwmwaUseImmersiveDarkModeBefore20h1, ref enabled, sizeof(int));
+
+        var captionColor = ToColorRef(AppTheme.Background);
+        _ = DwmSetWindowAttribute(form.Handle, DwmwaCaptionColor, ref captionColor, sizeof(int));
+
+        var textColor = ToColorRef(AppTheme.Text);
+        _ = DwmSetWindowAttribute(form.Handle, DwmwaTextColor, ref textColor, sizeof(int));
+    }
+
+    public static void ApplyDarkScrollBars(Control control)
+    {
+        if (!OperatingSystem.IsWindows() || !control.IsHandleCreated)
+        {
+            return;
+        }
+
+        _ = SetWindowTheme(control.Handle, "DarkMode_Explorer", null);
+    }
+
+    private static int ToColorRef(Color color) => color.R | (color.G << 8) | (color.B << 16);
+
+    [DllImport("dwmapi.dll", PreserveSig = true)]
+    private static extern int DwmSetWindowAttribute(nint hwnd, int attribute, ref int attributeValue, int attributeSize);
+
+    [DllImport("uxtheme.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
+    private static extern int SetWindowTheme(nint hWnd, string? pszSubAppName, string? pszSubIdList);
+}
+
 internal sealed class BufferedFlowLayoutPanel : FlowLayoutPanel
 {
     private const int SB_HORZ = 0;
@@ -43,6 +87,7 @@ internal sealed class BufferedFlowLayoutPanel : FlowLayoutPanel
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        NativeWindowStyler.ApplyDarkScrollBars(this);
         HideHorizontalScrollBar();
     }
 
@@ -82,6 +127,12 @@ internal sealed class BufferedPanel : Panel
         DoubleBuffered = true;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
         ResizeRedraw = true;
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        NativeWindowStyler.ApplyDarkScrollBars(this);
     }
 }
 
@@ -193,6 +244,12 @@ internal sealed class BufferedDataGridView : DataGridView
     {
         DoubleBuffered = true;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        NativeWindowStyler.ApplyDarkScrollBars(this);
     }
 }
 
@@ -373,7 +430,7 @@ internal sealed class MetricCard : Control
         get => _smoothingDurationMs;
         set
         {
-            _smoothingDurationMs = Math.Clamp(value, 0, 3000);
+            _smoothingDurationMs = Math.Clamp(value, 0, 6000);
             if (_smoothingDurationMs == 0)
             {
                 _ratio.SnapTo(_ratio.Target);
@@ -629,7 +686,7 @@ internal sealed class HostCard : Control
         get => _smoothingDurationMs;
         set
         {
-            _smoothingDurationMs = Math.Clamp(value, 0, 3000);
+            _smoothingDurationMs = Math.Clamp(value, 0, 6000);
             if (_smoothingDurationMs == 0)
             {
                 SnapRatiosToTargets();

@@ -9,6 +9,7 @@ internal sealed class MainForm : Form
     private const string AppDisplayName = "VRAM Vue";
     private const int WmEnterSizeMove = 0x0231;
     private const int WmExitSizeMove = 0x0232;
+    private const int MaxBarSmoothingMs = 6000;
 
     private readonly AppSettings _settings;
     private readonly SystemTelemetryCollector _collector = new();
@@ -72,6 +73,7 @@ internal sealed class MainForm : Form
     private bool _hasShownTrayTip;
     private bool _hostListDirty = true;
     private bool _isMovingOrSizing;
+    private int _openContextMenuCount;
     private bool _updatingProcessRows;
     private Guid? _lastRenderedProcessHostId;
     private string _lastRenderedProcessSignature = string.Empty;
@@ -91,6 +93,12 @@ internal sealed class MainForm : Form
         BuildUi();
         LoadSettingsIntoControls();
         WireEvents();
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        NativeWindowStyler.ApplyDarkTitleBar(this);
     }
 
     protected override void Dispose(bool disposing)
@@ -297,8 +305,9 @@ internal sealed class MainForm : Form
         var hostPanel = new RoundedPanel
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(12),
-            BackColor = AppTheme.Surface
+            Padding = new Padding(4),
+            BackColor = AppTheme.Background,
+            BorderColor = AppTheme.Background
         };
         _hostCardsPanel.Dock = DockStyle.Fill;
         _hostCardsPanel.FlowDirection = FlowDirection.TopDown;
@@ -306,7 +315,7 @@ internal sealed class MainForm : Form
         _hostCardsPanel.AutoScroll = true;
         _hostCardsPanel.AutoScrollMargin = Size.Empty;
         _hostCardsPanel.AutoScrollMinSize = Size.Empty;
-        _hostCardsPanel.BackColor = AppTheme.Surface;
+        _hostCardsPanel.BackColor = AppTheme.Background;
         _hostCardsPanel.HorizontalScroll.Enabled = false;
         _hostCardsPanel.HorizontalScroll.Visible = false;
         hostPanel.Controls.Add(_hostCardsPanel);
@@ -634,7 +643,7 @@ internal sealed class MainForm : Form
 
     private void BuildSettingsPage()
     {
-        var scroll = new Panel
+        var scroll = new BufferedPanel
         {
             Dock = DockStyle.Fill,
             AutoScroll = true,
@@ -714,7 +723,7 @@ internal sealed class MainForm : Form
         _listenerPortBox.BackColor = AppTheme.SurfaceRaised;
         _listenerPortBox.ForeColor = AppTheme.Text;
         _barSmoothingBox.Minimum = 0;
-        _barSmoothingBox.Maximum = 3000;
+        _barSmoothingBox.Maximum = MaxBarSmoothingMs;
         _barSmoothingBox.Increment = 50;
         _barSmoothingBox.BackColor = AppTheme.SurfaceRaised;
         _barSmoothingBox.ForeColor = AppTheme.Text;
@@ -821,7 +830,7 @@ internal sealed class MainForm : Form
             RowCount = 1,
             BackColor = AppTheme.Surface
         };
-        var digitWidth = Math.Max(78, TextRenderer.MeasureText("3000", _barSmoothingBox.Font).Width + 34);
+        var digitWidth = Math.Max(78, TextRenderer.MeasureText("6000", _barSmoothingBox.Font).Width + 34);
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, digitWidth));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Math.Max(42, TextRenderer.MeasureText("ms", Font).Width + 20)));
 
@@ -918,6 +927,10 @@ internal sealed class MainForm : Form
             textBox.ForeColor = AppTheme.Text;
             textBox.BorderStyle = BorderStyle.FixedSingle;
         }
+        _remoteNameBox.PlaceholderText = "Required name";
+        _remoteHostBox.PlaceholderText = "Required host/IP";
+        _remoteUserBox.PlaceholderText = "Required username";
+        _remotePasswordBox.PlaceholderText = "Required password";
         ConfigureTextInput(_remoteNameBox, 64, InputRules.IsDisplayNameChar, InputRules.NormalizeDisplayName);
         ConfigureTextInput(_remoteHostBox, 253, InputRules.IsHostChar, InputRules.NormalizeHost);
         ConfigureTextInput(_remoteUserBox, 64, InputRules.IsBasicAuthUsernameChar, InputRules.NormalizeBasicAuthUsername);
@@ -1122,7 +1135,7 @@ internal sealed class MainForm : Form
     private void LoadSettingsIntoControls()
     {
         _settings.UpdateIntervalMs = Math.Clamp(_settings.UpdateIntervalMs, 250, 9999);
-        _settings.BarSmoothingMs = Math.Clamp(_settings.BarSmoothingMs, 0, 3000);
+        _settings.BarSmoothingMs = Math.Clamp(_settings.BarSmoothingMs, 0, MaxBarSmoothingMs);
         _settings.MonitorWindowOpacityPercent = Math.Clamp(_settings.MonitorWindowOpacityPercent, 30, 100);
         _intervalBox.Text = _settings.UpdateIntervalMs.ToString("0000");
         _barSmoothingBox.Value = _settings.BarSmoothingMs;
@@ -1165,7 +1178,7 @@ internal sealed class MainForm : Form
 
     private void ApplyBarSmoothingFromBox(bool save)
     {
-        var smoothingMs = Math.Clamp((int)_barSmoothingBox.Value, 0, 3000);
+        var smoothingMs = Math.Clamp((int)_barSmoothingBox.Value, 0, MaxBarSmoothingMs);
         if (_settings.BarSmoothingMs != smoothingMs)
         {
             _settings.BarSmoothingMs = smoothingMs;
@@ -1232,9 +1245,40 @@ internal sealed class MainForm : Form
         }
     }
 
+    private bool IsUiInteractionPaused => _isMovingOrSizing || _openContextMenuCount > 0;
+
+    private void BeginContextMenuInteraction()
+    {
+        _openContextMenuCount++;
+    }
+
+    private void EndContextMenuInteraction()
+    {
+        if (_openContextMenuCount > 0)
+        {
+            _openContextMenuCount--;
+        }
+
+        ApplyPendingRefreshIfReady();
+    }
+
+    private void ApplyPendingRefreshIfReady()
+    {
+        if (IsUiInteractionPaused || _pendingRefreshResults is null)
+        {
+            return;
+        }
+
+        var pending = _pendingRefreshResults;
+        _pendingRefreshResults = null;
+        ApplyRefreshResultsCore(pending);
+    }
+
     private void ConfigureTrayIcon()
     {
         var trayMenu = new ContextMenuStrip();
+        trayMenu.Opening += (_, _) => BeginContextMenuInteraction();
+        trayMenu.Closed += (_, _) => EndContextMenuInteraction();
         trayMenu.Items.Add("Show", null, (_, _) => ShowFromTray());
         trayMenu.Items.Add("Refresh", null, async (_, _) => await RefreshAllHostsAsync());
         trayMenu.Items.Add(new ToolStripSeparator());
@@ -1373,7 +1417,7 @@ internal sealed class MainForm : Form
 
     private void ApplyRefreshResults(RefreshResults results)
     {
-        if (_isMovingOrSizing)
+        if (IsUiInteractionPaused)
         {
             _pendingRefreshResults = results;
             return;
@@ -1535,7 +1579,10 @@ internal sealed class MainForm : Form
         {
             if (!_hostCards.TryGetValue(snapshot.Id, out var card) || card.IsDisposed)
             {
-                card = new HostCard();
+                card = new HostCard
+                {
+                    UseCompactMemoryValues = true
+                };
                 var hostId = snapshot.Id;
                 card.Click += (_, _) =>
                 {
@@ -1561,7 +1608,7 @@ internal sealed class MainForm : Form
             card.Snapshot = snapshot;
             card.IsSelected = snapshot.Id == _selectedHostId;
             var scrollReserve = orderedSnapshots.Length > 1 ? SystemInformation.VerticalScrollBarWidth : 0;
-            card.Width = Math.Max(220, _hostCardsPanel.ClientSize.Width - scrollReserve - 28);
+            card.Width = Math.Max(220, _hostCardsPanel.ClientSize.Width - scrollReserve - 8);
             var preferredHeight = Math.Max(216, card.Font.Height * 7 + 104);
             if (orderedSnapshots.Length == 1 && _hostCardsPanel.ClientSize.Height > 234)
             {
@@ -1598,6 +1645,7 @@ internal sealed class MainForm : Form
             }
             else
             {
+                existing.SnapBoundsProvider = GetSnapTargetsForMonitorWindow;
                 existing.UpdateSnapshot(snapshot, _settings.BarSmoothingMs);
                 existing.ApplyOptions(_settings.MonitorWindowsStayOnTop, _settings.MonitorWindowOpacityPercent);
                 if (existing.WindowState == FormWindowState.Minimized)
@@ -1612,6 +1660,9 @@ internal sealed class MainForm : Form
         }
 
         var window = new HostMonitorForm(hostId, _appIcon);
+        window.SnapBoundsProvider = GetSnapTargetsForMonitorWindow;
+        window.ContextMenuOpened += (_, _) => BeginContextMenuInteraction();
+        window.ContextMenuClosed += (_, _) => EndContextMenuInteraction();
         window.FormClosed += (_, _) => _monitorWindows.Remove(hostId);
         window.UpdateSnapshot(snapshot, _settings.BarSmoothingMs);
         window.ApplyOptions(_settings.MonitorWindowsStayOnTop, _settings.MonitorWindowOpacityPercent);
@@ -1650,6 +1701,24 @@ internal sealed class MainForm : Form
         var x = Math.Clamp(Cursor.Position.X + 18, screen.Left, Math.Max(screen.Left, screen.Right - window.Width));
         var y = Math.Clamp(Cursor.Position.Y + 18, screen.Top, Math.Max(screen.Top, screen.Bottom - window.Height));
         window.Location = new Point(x, y);
+    }
+
+    private IEnumerable<Rectangle> GetSnapTargetsForMonitorWindow(HostMonitorForm source)
+    {
+        if (WindowState == FormWindowState.Normal && Visible)
+        {
+            yield return Bounds;
+        }
+
+        foreach (var window in _monitorWindows.Values)
+        {
+            if (ReferenceEquals(window, source) || window.IsDisposed || window.WindowState != FormWindowState.Normal)
+            {
+                continue;
+            }
+
+            yield return window.Bounds;
+        }
     }
 
     private void RefreshSelectedHostView(bool forceProcessRefresh = false)
@@ -1735,9 +1804,9 @@ internal sealed class MainForm : Form
         }
 
         SetMetric(_cpuCard, "CPU", Formatters.Percent(host.CpuPercent), host.DisplayName, host.CpuPercent / 100);
-        SetMemoryMetric(_ramCard, "RAM used", host.RamUsedBytes, host.RamTotalBytes, AppTheme.Good);
+        SetMemoryMetric(_ramCard, "RAM", host.RamUsedBytes, host.RamTotalBytes, AppTheme.Good);
         SetMetric(_gpuCard, "GPU", Formatters.Percent(host.GpuPercent), "Engine utilization", host.GpuPercent / 100);
-        SetMemoryMetric(_vramCard, "VRAM used", host.VramUsedBytes, host.VramTotalBytes, AppTheme.Danger);
+        SetMemoryMetric(_vramCard, "VRAM", host.VramUsedBytes, host.VramTotalBytes, AppTheme.Danger);
     }
 
     private static void SetMetric(MetricCard card, string title, string value, string detail, double ratio)
@@ -1766,15 +1835,20 @@ internal sealed class MainForm : Form
             : overBytes > 0
                 ? $"{Formatters.BytesPrecise(overBytes)} over / {Formatters.BytesPrecise(totalBytes)} total"
                 : $"{Formatters.BytesPrecise(freeBytes)} free / {Formatters.BytesPrecise(totalBytes)} total";
+        var value = totalBytes <= 0
+            ? Formatters.BytesPrecise(usedBytes)
+            : $"{BytesAsGb(usedBytes)}/{BytesAsGb(totalBytes)}GB";
 
         var previousAccent = card.AccentColor;
         card.AccentColor = overBytes > 0 ? AppTheme.Warning : accentColor;
-        SetMetric(card, title, Formatters.BytesPrecise(usedBytes), detail, Formatters.Ratio(usedBytes, totalBytes));
+        SetMetric(card, title, value, detail, Formatters.Ratio(usedBytes, totalBytes));
         if (previousAccent != card.AccentColor)
         {
             card.Invalidate();
         }
     }
+
+    private static string BytesAsGb(long bytes) => $"{bytes / 1024D / 1024D / 1024D:N2}";
 
     private async Task KillSelectedProcessAsync()
     {
@@ -1971,6 +2045,12 @@ internal sealed class MainForm : Form
         var username = InputRules.NormalizeBasicAuthUsername(_remoteUserBox.Text);
         var password = InputRules.NormalizePassword(_remotePasswordBox.Text);
         var thumbprint = InputRules.NormalizeThumbprint(_remoteThumbprintBox.Text);
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            MessageBox.Show(this, "Enter a display name for the remote host.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
 
         if (!InputRules.IsValidHost(host))
         {
@@ -2212,12 +2292,7 @@ internal sealed class MainForm : Form
         if (m.Msg == WmExitSizeMove)
         {
             _isMovingOrSizing = false;
-            if (_pendingRefreshResults is not null)
-            {
-                var pending = _pendingRefreshResults;
-                _pendingRefreshResults = null;
-                ApplyRefreshResultsCore(pending);
-            }
+            ApplyPendingRefreshIfReady();
         }
     }
 

@@ -34,13 +34,13 @@ Tagged releases publish installer assets to the GitHub Releases page. For v6, do
 The v6 installer built by this repo is:
 
 ```text
-dist\VRAMVue-Setup-v6.0.1-win-x64.msi
+dist\VRAMVue-Setup-v6.0.2-win-x64.msi
 ```
 
 For users who want to unzip and run `VramVue.exe` directly, use the portable self-contained build:
 
 ```text
-dist\VRAMVue-Portable-v6.0.1-win-x64.zip
+dist\VRAMVue-Portable-v6.0.2-win-x64.zip
 ```
 
 The GitHub release notes include SHA-256 hashes for the actual downloadable files.
@@ -49,7 +49,7 @@ To rebuild both artifacts from source:
 
 ```powershell
 dotnet tool install --global wix --version 6.0.2
-.\scripts\Build-Msi.ps1 -Version 6.0.1
+.\scripts\Build-Msi.ps1 -Version 6.0.2
 ```
 
 The MSI installs a self-contained `VramVue.exe` under Program Files and adds a Start Menu shortcut. The portable zip contains the same self-contained executable.
@@ -57,31 +57,31 @@ The MSI installs a self-contained `VramVue.exe` under Program Files and adds a S
 ## Install, Upgrade, and Uninstall
 
 ```powershell
-msiexec /i .\dist\VRAMVue-Setup-v6.0.1-win-x64.msi
+msiexec /i .\dist\VRAMVue-Setup-v6.0.2-win-x64.msi
 ```
 
 The graphical installer includes a folder picker. Silent installs can set the same location with `INSTALLFOLDER`:
 
 ```powershell
-msiexec /i .\dist\VRAMVue-Setup-v6.0.1-win-x64.msi INSTALLFOLDER="D:\Apps\VRAM Vue\" /qn /norestart
+msiexec /i .\dist\VRAMVue-Setup-v6.0.2-win-x64.msi INSTALLFOLDER="D:\Apps\VRAM Vue\" /qn /norestart
 ```
 
 Upgrade from an older MSI:
 
 ```powershell
-msiexec /i .\dist\VRAMVue-Setup-v6.0.1-win-x64.msi
+msiexec /i .\dist\VRAMVue-Setup-v6.0.2-win-x64.msi
 ```
 
 Silent install:
 
 ```powershell
-msiexec /i .\dist\VRAMVue-Setup-v6.0.1-win-x64.msi /qn /norestart
+msiexec /i .\dist\VRAMVue-Setup-v6.0.2-win-x64.msi /qn /norestart
 ```
 
 Uninstall:
 
 ```powershell
-msiexec /x .\dist\VRAMVue-Setup-v6.0.1-win-x64.msi
+msiexec /x .\dist\VRAMVue-Setup-v6.0.2-win-x64.msi
 ```
 
 MSI upgrades remove the previous installed version and keep the existing install folder when possible. Uninstall removes the installed executable, Start Menu shortcut, installer registry entries, and empty install directory. Per-user settings are intentionally left in `%APPDATA%\VramOp` so upgrades and reinstalls keep saved hosts and preferences.
@@ -109,7 +109,7 @@ Do not distribute the developer build folder unless the target PC already has co
 5. Allow the listener port through Windows Firewall if another computer cannot connect.
 6. The first successful remote connection pins that host certificate fingerprint.
 
-The update interval defaults to `250 ms` and accepts values from `250 ms` through `9999 ms`. CPU and GPU utilization are sampled every `250 ms` and shown as a rolling 1-second average for smoother bars.
+The update interval defaults to `250 ms` and accepts values from `250 ms` through `9999 ms`. CPU and GPU utilization are sampled every `250 ms` and shown as a rolling 1-second average for smoother bars. Visual bar smoothing accepts `0 ms` through `6000 ms`.
 
 ## Detached Monitor Widgets
 
