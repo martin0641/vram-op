@@ -9,11 +9,11 @@ Portable: `dist\VRAMVue-Portable-v6.0.4-win-x64.zip`
 
 No vulnerable or deprecated NuGet packages were reported by the current configured NuGet source. A lightweight secret scan found code-level password/token identifiers but no committed credentials or private keys. WiX MSI validation passed. The distribution build produces both a self-contained MSI and a self-contained portable zip, settings exports use password-based AES-256-GCM encryption, and network activity telemetry is collected without adding new third-party dependencies.
 
-## Local Smoke Artifact Hashes
+## Official GitHub Release Artifact Hashes
 
 ```text
-VRAMVue-Setup-v6.0.4-win-x64.msi     F4EC157DA46B3C6EC28E10FC45DE979C5B1ECA89C45CF2E236C4B22302718FF0
-VRAMVue-Portable-v6.0.4-win-x64.zip  3958DE7D91011071C66B60BB650D36276FBB9C8F358CD755BF816263D01928CD
+VRAMVue-Setup-v6.0.4-win-x64.msi     FC1952AD96DD2D226BAA8FCA719BF4799BA12DBFA059C8D18D34C5AF265DCEFA
+VRAMVue-Portable-v6.0.4-win-x64.zip  4C13DF2D826AD5EB5C4A9389D649B5D7BAE3A6C14C88643C5763CA1DA5DD298A
 ```
 
 ## Commands Run
