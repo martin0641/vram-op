@@ -5,8 +5,12 @@ namespace VramOp;
 
 internal sealed class NetworkUsageReader : IDisposable
 {
+    private static readonly TimeSpan InterfaceRefreshInterval = TimeSpan.FromSeconds(10);
+
     private readonly object _gate = new();
     private readonly Dictionary<string, InterfaceCounterSnapshot> _previous = new(StringComparer.OrdinalIgnoreCase);
+    private NetworkInterface[] _cachedInterfaces = [];
+    private DateTimeOffset _lastInterfaceRefresh = DateTimeOffset.MinValue;
     private NetworkSelectionMode _selectionMode = NetworkSelectionMode.Auto;
     private List<string> _selectedIds = [];
     private bool _disposed;
@@ -65,15 +69,14 @@ internal sealed class NetworkUsageReader : IDisposable
         lock (_gate)
         {
             _previous.Clear();
+            _cachedInterfaces = [];
             _disposed = true;
         }
     }
 
     private IReadOnlyList<InterfaceRateSnapshot> ReadInterfaceSnapshots(DateTimeOffset now)
     {
-        var interfaces = NetworkInterface.GetAllNetworkInterfaces()
-            .Where(IsVisibleInterface)
-            .ToArray();
+        var interfaces = GetVisibleInterfaces(now);
         var snapshots = new List<InterfaceRateSnapshot>(interfaces.Length);
 
         foreach (var networkInterface in interfaces)
@@ -119,6 +122,21 @@ internal sealed class NetworkUsageReader : IDisposable
         }
 
         return snapshots;
+    }
+
+    private NetworkInterface[] GetVisibleInterfaces(DateTimeOffset now)
+    {
+        if (_cachedInterfaces.Length > 0
+            && now - _lastInterfaceRefresh < InterfaceRefreshInterval)
+        {
+            return _cachedInterfaces;
+        }
+
+        _cachedInterfaces = NetworkInterface.GetAllNetworkInterfaces()
+            .Where(IsVisibleInterface)
+            .ToArray();
+        _lastInterfaceRefresh = now;
+        return _cachedInterfaces;
     }
 
     private IEnumerable<InterfaceRateSnapshot> SelectInterfaces(

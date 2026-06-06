@@ -9,16 +9,19 @@ using System.Text.Json;
 
 namespace VramOp;
 
-internal sealed class RemoteTelemetryClient
+internal sealed class RemoteTelemetryClient : IDisposable
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
+    private readonly object _gate = new();
+    private readonly Dictionary<Guid, CachedClient> _clients = [];
 
     public async Task<RemoteTelemetryResult> ReadTelemetryAsync(RemoteHostConfig host, CancellationToken cancellationToken)
     {
         string? observedThumbprint = null;
 
-        using var client = CreateClient(host, thumbprint => observedThumbprint = thumbprint);
-        using var response = await client.GetAsync(BuildTelemetryUrl(host), cancellationToken);
+        var client = GetOrCreateClient(host);
+        using var response = await client.HttpClient.GetAsync(BuildTelemetryUrl(host), cancellationToken);
+        observedThumbprint = client.ObservedThumbprint;
 
         if (response.StatusCode == HttpStatusCode.Unauthorized)
         {
@@ -40,8 +43,8 @@ internal sealed class RemoteTelemetryClient
 
     public async Task<IReadOnlyList<NetworkInterfaceOption>> ReadNetworkInterfacesAsync(RemoteHostConfig host, CancellationToken cancellationToken)
     {
-        using var client = CreateClient(host, _ => { });
-        using var response = await client.GetAsync($"{host.BaseUrl}/api/network/interfaces", cancellationToken);
+        var client = GetOrCreateClient(host);
+        using var response = await client.HttpClient.GetAsync($"{host.BaseUrl}/api/network/interfaces", cancellationToken);
 
         if (response.StatusCode == HttpStatusCode.Unauthorized)
         {
@@ -80,8 +83,8 @@ internal sealed class RemoteTelemetryClient
 
     private async Task<KillProcessResponse> SendKillRequestAsync(RemoteHostConfig host, string url, CancellationToken cancellationToken)
     {
-        using var client = CreateClient(host, _ => { });
-        using var response = await client.PostAsync(url, content: null, cancellationToken);
+        var client = GetOrCreateClient(host);
+        using var response = await client.HttpClient.PostAsync(url, content: null, cancellationToken);
 
         if (response.StatusCode == HttpStatusCode.Unauthorized)
         {
@@ -94,8 +97,44 @@ internal sealed class RemoteTelemetryClient
             ?? new KillProcessResponse(false, "Empty kill response");
     }
 
-    private static HttpClient CreateClient(RemoteHostConfig host, Action<string> onObservedThumbprint)
+    public void Dispose()
     {
+        lock (_gate)
+        {
+            foreach (var client in _clients.Values)
+            {
+                client.Dispose();
+            }
+
+            _clients.Clear();
+        }
+    }
+
+    private CachedClient GetOrCreateClient(RemoteHostConfig host)
+    {
+        var signature = ClientSignature.From(host);
+        lock (_gate)
+        {
+            if (_clients.TryGetValue(host.Id, out var existing))
+            {
+                if (existing.Signature.Equals(signature))
+                {
+                    return existing;
+                }
+
+                existing.Dispose();
+                _clients.Remove(host.Id);
+            }
+
+            var created = CreateClient(host, signature);
+            _clients[host.Id] = created;
+            return created;
+        }
+    }
+
+    private static CachedClient CreateClient(RemoteHostConfig host, ClientSignature signature)
+    {
+        var cachedClient = new CachedClient(signature);
         var handler = new HttpClientHandler
         {
             SslProtocols = SslProtocols.Tls13,
@@ -108,7 +147,7 @@ internal sealed class RemoteTelemetryClient
 
                 using var cert = new X509Certificate2(certificate);
                 var thumbprint = Convert.ToHexString(cert.GetCertHash(HashAlgorithmName.SHA256));
-                onObservedThumbprint(thumbprint);
+                cachedClient.SetObservedThumbprint(thumbprint);
 
                 if (!string.IsNullOrWhiteSpace(host.TrustedCertificateThumbprint))
                 {
@@ -124,16 +163,16 @@ internal sealed class RemoteTelemetryClient
             }
         };
 
-        var client = new HttpClient(handler)
+        cachedClient.HttpClient = new HttpClient(handler)
         {
             Timeout = TimeSpan.FromSeconds(15)
         };
 
         var rawCredentials = $"{host.Username}:{host.GetPassword()}";
         var encodedCredentials = Convert.ToBase64String(Encoding.UTF8.GetBytes(rawCredentials));
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", encodedCredentials);
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("VRAM-Vue/1.0");
-        return client;
+        cachedClient.HttpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", encodedCredentials);
+        cachedClient.HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("VRAM-Vue/1.0");
+        return cachedClient;
     }
 
     private static string BuildTelemetryUrl(RemoteHostConfig host)
@@ -155,6 +194,39 @@ internal sealed class RemoteTelemetryClient
         value.Replace(":", string.Empty, StringComparison.Ordinal)
             .Replace(" ", string.Empty, StringComparison.Ordinal)
             .Trim();
+
+    private sealed class CachedClient(ClientSignature signature) : IDisposable
+    {
+        private string _observedThumbprint = string.Empty;
+
+        public ClientSignature Signature { get; } = signature;
+        public HttpClient HttpClient { get; set; } = null!;
+        public string ObservedThumbprint => Volatile.Read(ref _observedThumbprint);
+
+        public void SetObservedThumbprint(string thumbprint)
+        {
+            Volatile.Write(ref _observedThumbprint, thumbprint);
+        }
+
+        public void Dispose()
+        {
+            HttpClient.Dispose();
+        }
+    }
+
+    private readonly record struct ClientSignature(
+        string BaseUrl,
+        string Username,
+        string ProtectedPassword,
+        string TrustedCertificateThumbprint)
+    {
+        public static ClientSignature From(RemoteHostConfig host) =>
+            new(
+                host.BaseUrl,
+                host.Username,
+                host.ProtectedPassword,
+                NormalizeThumbprint(host.TrustedCertificateThumbprint));
+    }
 }
 
 internal sealed record RemoteTelemetryResult(

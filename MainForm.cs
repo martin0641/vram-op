@@ -152,6 +152,7 @@ internal sealed class MainForm : Form
             _notifyIcon.Dispose();
             _toolTip.Dispose();
             _appIcon.Dispose();
+            _remoteClient.Dispose();
             _collector.Dispose();
             _server.StopAsync().GetAwaiter().GetResult();
         }

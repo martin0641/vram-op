@@ -29,7 +29,7 @@ internal sealed class SystemTelemetryCollector : IDisposable
         _hostId = $"{Environment.MachineName}-{Environment.UserName}";
         _adapters = ReadGpuAdapters();
 
-        _usageSampler = new UsageSampler(ReadCpuPercent, _gpuUtilizationReader.ReadPercent);
+        _usageSampler = new UsageSampler(ReadCpuPercent, ReadGpuPercent);
     }
 
     public HostTelemetry Read(NetworkSelectionOverride? networkSelectionOverride = null)
@@ -323,6 +323,14 @@ internal sealed class SystemTelemetryCollector : IDisposable
     }
 
     private double ReadCpuPercent() => _cpuUsageReader.ReadPercent();
+
+    private double ReadGpuPercent()
+    {
+        lock (_readGate)
+        {
+            return _gpuUtilizationReader.ReadPercent();
+        }
+    }
 
     private static List<GpuAdapterInfo> ReadGpuAdapters()
     {
