@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "6.0.0",
+    [string]$Version = "6.0.1",
     [string]$RuntimeIdentifier = "win-x64"
 )
 
@@ -22,6 +22,9 @@ if (-not $wix) {
     throw "WiX Toolset CLI was not found. Install it with: dotnet tool install --global wix --version 6.0.2"
 }
 
+$wixUiExtension = "WixToolset.UI.wixext/6.0.2"
+wix extension add --global $wixUiExtension | Out-Null
+
 New-Item -ItemType Directory -Force -Path $publishDir, $wixIntermediateDir, $distDir | Out-Null
 
 dotnet publish $projectPath `
@@ -39,6 +42,7 @@ dotnet publish $projectPath `
     /p:DebugSymbols=false
 
 wix build $wxsPath `
+    -ext WixToolset.UI.wixext `
     -arch x64 `
     -d ProductVersion=$Version `
     -d PublishDir=$publishDir `

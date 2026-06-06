@@ -1,4 +1,6 @@
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix
+  xmlns="http://wixtoolset.org/schemas/v4/wxs"
+  xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package
     Name="VRAM Vue"
     Manufacturer="Martin (martin0641)"
@@ -14,6 +16,20 @@
     <MediaTemplate EmbedCab="yes" />
     <Icon Id="VramVueIcon" SourceFile="$(var.RepoRoot)\Assets\VramOp.ico" />
     <Property Id="ARPPRODUCTICON" Value="VramVueIcon" />
+    <Property Id="ARPCONTACT" Value="martin0641@gmail.com" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/martin0641/vram-op" />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" Sequence="execute" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Property Id="INSTALLFOLDER">
+      <RegistrySearch
+        Id="PreviousInstallFolderSearch"
+        Root="HKLM"
+        Key="Software\VRAM Vue"
+        Name="InstallFolder"
+        Type="raw" />
+    </Property>
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.RepoRoot)\installer\License.rtf" />
+    <ui:WixUI Id="WixUI_InstallDir" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="VRAM Vue">
@@ -23,6 +39,18 @@
             Name="VramVue.exe"
             Source="$(var.PublishDir)\VramVue.exe"
             KeyPath="yes" />
+          <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+          <RegistryValue
+            Root="HKLM"
+            Key="Software\VRAM Vue"
+            Name="InstallFolder"
+            Type="string"
+            Value="[INSTALLFOLDER]" />
+          <RemoveRegistryKey
+            Id="RemoveApplicationRegistryKey"
+            Root="HKLM"
+            Key="Software\VRAM Vue"
+            Action="removeOnUninstall" />
         </Component>
       </Directory>
     </StandardDirectory>
