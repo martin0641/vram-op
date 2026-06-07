@@ -55,7 +55,7 @@ internal sealed class HostMonitorForm : Form
         MaximizeBox = true;
         ShowInTaskbar = true;
         StartPosition = FormStartPosition.Manual;
-        MinimumSize = new Size(320, 260);
+        MinimumSize = new Size(170, 118);
         ClientSize = new Size(430, 340);
         Padding = Padding.Empty;
         KeyPreview = true;

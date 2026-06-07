@@ -957,26 +957,35 @@ internal sealed class HostCard : Control
         e.Graphics.DrawPath(border, path);
 
         var networkRows = snapshot.NetworkInterfaces.Take(4).ToArray();
-        var compact = Height < 220 || Width < 240;
-        var pad = compact ? Math.Max(10, Font.Height / 2) : Math.Max(12, Font.Height);
+        var popout = ShowResizeGrip;
+        var micro = popout && (Height < 170 || Width < 300);
+        var compact = micro || Height < 220 || Width < 240;
+        var pad = micro ? Math.Max(7, Font.Height / 2) : compact ? Math.Max(10, Font.Height / 2) : Math.Max(12, Font.Height);
         var inner = Rectangle.Inflate(rect, -pad, -pad);
         using var titleFont = new Font(Font.FontFamily, Font.Size + (compact ? 0.5F : 1.5F), FontStyle.Bold);
-        var titleHeight = TextRenderer.MeasureText(e.Graphics, snapshot.DisplayName, titleFont, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
-        var statusHeight = TextRenderer.MeasureText(e.Graphics, "Hg", Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
-        TextRenderer.DrawText(e.Graphics, snapshot.DisplayName, titleFont, new Rectangle(inner.Left, inner.Top, inner.Width, titleHeight), AppTheme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
-        TextRenderer.DrawText(e.Graphics, snapshot.Status, Font, new Rectangle(inner.Left, inner.Top + titleHeight, inner.Width, statusHeight), AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        var titleText = popout ? $"{snapshot.DisplayName} - {snapshot.Status}" : snapshot.DisplayName;
+        var titleHeight = TextRenderer.MeasureText(e.Graphics, titleText, titleFont, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
+        var statusHeight = popout ? 0 : TextRenderer.MeasureText(e.Graphics, "Hg", Font, Size.Empty, TextFormatFlags.NoPadding).Height + 2;
+        TextRenderer.DrawText(e.Graphics, titleText, titleFont, new Rectangle(inner.Left, inner.Top, inner.Width, titleHeight), AppTheme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        if (!popout)
+        {
+            TextRenderer.DrawText(e.Graphics, snapshot.Status, Font, new Rectangle(inner.Left, inner.Top + titleHeight, inner.Width, statusHeight), AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        }
 
-        var y = inner.Top + titleHeight + statusHeight + (compact ? 4 : Math.Max(10, Font.Height / 2));
+        var y = inner.Top + titleHeight + statusHeight + (micro ? 2 : compact ? 4 : Math.Max(10, Font.Height / 2));
         var totalLines = 4 + networkRows.Length;
+        var minimumLineHeight = micro ? Math.Max(10, Font.Height + 1) : Math.Max(Font.Height + 3, 18);
         var availableLineHeight = totalLines <= 0
             ? 0
-            : Math.Max(Font.Height + 3, (inner.Bottom - y - (ShowResizeGrip ? Math.Max(12, Font.Height) : 0)) / totalLines);
+            : Math.Max(minimumLineHeight, (inner.Bottom - y - (ShowResizeGrip ? Math.Max(8, Font.Height / 2) : 0)) / totalLines);
         var desiredLineHeight = compact ? Math.Max(Font.Height + 3, 22) : Math.Max(Font.Height + 8, 26);
-        var lineHeight = Math.Max(Font.Height + 3, Math.Min(desiredLineHeight, availableLineHeight));
-        DrawMetricLine(e.Graphics, "CPU", _cpuRatio.Display, Formatters.Percent(snapshot.CpuPercent), y, lineHeight, AppTheme.Accent);
-        DrawMetricLine(e.Graphics, "RAM", _ramRatio.Display, MemoryLine(snapshot.RamUsedBytes, snapshot.RamTotalBytes), y + lineHeight, lineHeight, AppTheme.Good);
-        DrawMetricLine(e.Graphics, "GPU", _gpuRatio.Display, Formatters.Percent(snapshot.GpuPercent), y + lineHeight * 2, lineHeight, AppTheme.Warning);
-        DrawMetricLine(e.Graphics, "VRAM", _vramRatio.Display, MemoryLine(snapshot.VramUsedBytes, snapshot.VramTotalBytes), y + lineHeight * 3, lineHeight, AppTheme.Danger);
+        var lineHeight = Math.Max(minimumLineHeight, Math.Min(desiredLineHeight, availableLineHeight));
+        var hideLabels = popout && Width < 210;
+        var hideValues = popout && Width < 300;
+        DrawMetricLine(e.Graphics, "CPU", _cpuRatio.Display, Formatters.Percent(snapshot.CpuPercent), y, lineHeight, AppTheme.Accent, hideLabels, hideValues);
+        DrawMetricLine(e.Graphics, "RAM", _ramRatio.Display, MemoryLine(snapshot.RamUsedBytes, snapshot.RamTotalBytes), y + lineHeight, lineHeight, AppTheme.Good, hideLabels, hideValues);
+        DrawMetricLine(e.Graphics, "GPU", _gpuRatio.Display, Formatters.Percent(snapshot.GpuPercent), y + lineHeight * 2, lineHeight, AppTheme.Warning, hideLabels, hideValues);
+        DrawMetricLine(e.Graphics, "VRAM", _vramRatio.Display, MemoryLine(snapshot.VramUsedBytes, snapshot.VramTotalBytes), y + lineHeight * 3, lineHeight, AppTheme.Danger, hideLabels, hideValues);
 
         for (var index = 0; index < networkRows.Length; index++)
         {
@@ -993,7 +1002,9 @@ internal sealed class HostCard : Control
                     _networkSendRatios[index].Display,
                     networkValue,
                     y + lineHeight * (4 + index),
-                    lineHeight);
+                    lineHeight,
+                    hideLabels,
+                    hideValues);
             }
             else
             {
@@ -1147,41 +1158,73 @@ internal sealed class HostCard : Control
 
     private static string BytesAsGb(long bytes) => $"{bytes / 1024D / 1024D / 1024D:N2}";
 
-    private void DrawMetricLine(Graphics graphics, string label, double ratio, string value, int y, int lineHeight, Color color)
+    private void DrawMetricLine(Graphics graphics, string label, double ratio, string value, int y, int lineHeight, Color color, bool hideLabel = false, bool hideValue = false)
     {
-        var labelWidth = Math.Max(52, TextRenderer.MeasureText("VRAM", Font).Width + 4);
-        var valueWidth = Math.Min(Math.Max(86, Width / 3), Math.Max(90, Width - labelWidth - 110));
-        var left = Math.Max(12, Font.Height);
         var barHeight = Math.Max(8, Font.Height / 2);
-        var labelRect = new Rectangle(left, y, labelWidth, lineHeight);
-        TextRenderer.DrawText(graphics, label, Font, labelRect, AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        var (labelRect, barRect, valueRect) = GetMetricLineLayout(y, lineHeight, barHeight, hideLabel, hideValue);
+        if (!hideLabel)
+        {
+            TextRenderer.DrawText(graphics, label, Font, labelRect, AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
 
-        var barLeft = left + labelWidth + 8;
-        var barRight = Width - valueWidth - left - 8;
-        var barRect = new Rectangle(barLeft, y + (lineHeight - barHeight) / 2, Math.Max(36, barRight - barLeft), barHeight);
         MetricCard.DrawProgress(graphics, barRect, ratio, color);
 
-        var valueRect = new Rectangle(barRect.Right + 8, y, Width - barRect.Right - left - 8, lineHeight);
-        TextRenderer.DrawText(graphics, value, Font, valueRect, AppTheme.Text, TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        if (!hideValue)
+        {
+            TextRenderer.DrawText(graphics, value, Font, valueRect, AppTheme.Text, TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        }
     }
 
-    private void DrawNetworkMetricLine(Graphics graphics, string label, double receiveRatio, double sendRatio, string value, int y, int lineHeight)
+    private void DrawNetworkMetricLine(Graphics graphics, string label, double receiveRatio, double sendRatio, string value, int y, int lineHeight, bool hideLabel = false, bool hideValue = false)
     {
-        var labelWidth = Math.Max(52, TextRenderer.MeasureText("NIC4", Font).Width + 4);
-        var measuredValueWidth = TextRenderer.MeasureText(value, Font).Width + 6;
-        var valueWidth = Math.Min(Math.Max(112, measuredValueWidth), Math.Max(112, Width - labelWidth - 80));
-        var left = Math.Max(12, Font.Height);
         var barHeight = Math.Max(8, Font.Height / 2);
-        var labelRect = new Rectangle(left, y, labelWidth, lineHeight);
-        TextRenderer.DrawText(graphics, label, Font, labelRect, AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        var (labelRect, barRect, valueRect) = GetMetricLineLayout(y, lineHeight, barHeight, hideLabel, hideValue);
+        if (!hideLabel)
+        {
+            TextRenderer.DrawText(graphics, label, Font, labelRect, AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
 
-        var barLeft = left + labelWidth + 8;
-        var barRight = Width - valueWidth - left - 8;
-        var barRect = new Rectangle(barLeft, y + (lineHeight - barHeight) / 2, Math.Max(36, barRight - barLeft), barHeight);
         DrawDuplexProgress(graphics, barRect, receiveRatio, sendRatio);
 
-        var valueRect = new Rectangle(barRect.Right + 8, y, Width - barRect.Right - left - 8, lineHeight);
-        TextRenderer.DrawText(graphics, value, Font, valueRect, AppTheme.Text, TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        if (!hideValue)
+        {
+            TextRenderer.DrawText(graphics, value, Font, valueRect, AppTheme.Text, TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        }
+    }
+
+    private (Rectangle LabelRect, Rectangle BarRect, Rectangle ValueRect) GetMetricLineLayout(int y, int lineHeight, int barHeight, bool hideLabel, bool hideValue)
+    {
+        var left = Math.Max(9, Font.Height);
+        var labelWidth = hideLabel
+            ? 0
+            : Math.Max(48, Math.Max(TextRenderer.MeasureText("VRAM", Font).Width, TextRenderer.MeasureText("NIC4", Font).Width) + 4);
+        var labelGap = hideLabel ? 0 : 8;
+        var valueWidth = hideValue ? 0 : Math.Min(150, Math.Max(92, Width / 3));
+        var valueGap = hideValue ? 0 : 8;
+        var labelRect = new Rectangle(left, y, labelWidth, lineHeight);
+        var barLeft = left + labelWidth + labelGap;
+        var barRight = Width - left - valueWidth - valueGap;
+
+        if (!hideValue && barRight - barLeft < 48)
+        {
+            valueWidth = 0;
+            valueGap = 0;
+            barRight = Width - left;
+        }
+
+        if (!hideLabel && barRight - barLeft < 48)
+        {
+            labelWidth = 0;
+            labelGap = 0;
+            labelRect = Rectangle.Empty;
+            barLeft = left;
+        }
+
+        var barRect = new Rectangle(barLeft, y + (lineHeight - barHeight) / 2, Math.Max(28, barRight - barLeft), barHeight);
+        var valueRect = hideValue || valueWidth <= 0
+            ? Rectangle.Empty
+            : new Rectangle(barRect.Right + valueGap, y, Math.Max(0, Width - barRect.Right - left - valueGap), lineHeight);
+        return (labelRect, barRect, valueRect);
     }
 
     private void DrawNetworkTextLine(Graphics graphics, string label, string value, int y, int lineHeight)
