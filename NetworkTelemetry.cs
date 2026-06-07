@@ -5,15 +5,19 @@ namespace VramOp;
 
 internal sealed class NetworkUsageReader : IDisposable
 {
-    private static readonly TimeSpan InterfaceRefreshInterval = TimeSpan.FromSeconds(10);
-
     private readonly object _gate = new();
     private readonly Dictionary<string, InterfaceCounterSnapshot> _previous = new(StringComparer.OrdinalIgnoreCase);
     private NetworkInterface[] _cachedInterfaces = [];
-    private DateTimeOffset _lastInterfaceRefresh = DateTimeOffset.MinValue;
+    private bool _interfacesDirty = true;
     private NetworkSelectionMode _selectionMode = NetworkSelectionMode.Auto;
     private List<string> _selectedIds = [];
     private bool _disposed;
+
+    public NetworkUsageReader()
+    {
+        NetworkChange.NetworkAddressChanged += MarkInterfacesDirty;
+        NetworkChange.NetworkAvailabilityChanged += MarkInterfacesDirty;
+    }
 
     public void ApplySettings(AppSettings settings)
     {
@@ -25,6 +29,7 @@ internal sealed class NetworkUsageReader : IDisposable
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Take(4)
                 .ToList();
+            _interfacesDirty = true;
         }
     }
 
@@ -70,8 +75,12 @@ internal sealed class NetworkUsageReader : IDisposable
         {
             _previous.Clear();
             _cachedInterfaces = [];
+            _interfacesDirty = false;
             _disposed = true;
         }
+
+        NetworkChange.NetworkAddressChanged -= MarkInterfacesDirty;
+        NetworkChange.NetworkAvailabilityChanged -= MarkInterfacesDirty;
     }
 
     private IReadOnlyList<InterfaceRateSnapshot> ReadInterfaceSnapshots(DateTimeOffset now)
@@ -118,6 +127,7 @@ internal sealed class NetworkUsageReader : IDisposable
             catch (Exception ex) when (ex is NetworkInformationException or PlatformNotSupportedException or InvalidOperationException or Win32Exception)
             {
                 // Interfaces can disappear between enumeration and statistics reads.
+                _interfacesDirty = true;
             }
         }
 
@@ -127,7 +137,7 @@ internal sealed class NetworkUsageReader : IDisposable
     private NetworkInterface[] GetVisibleInterfaces(DateTimeOffset now)
     {
         if (_cachedInterfaces.Length > 0
-            && now - _lastInterfaceRefresh < InterfaceRefreshInterval)
+            && !_interfacesDirty)
         {
             return _cachedInterfaces;
         }
@@ -135,8 +145,19 @@ internal sealed class NetworkUsageReader : IDisposable
         _cachedInterfaces = NetworkInterface.GetAllNetworkInterfaces()
             .Where(IsVisibleInterface)
             .ToArray();
-        _lastInterfaceRefresh = now;
+        _interfacesDirty = false;
         return _cachedInterfaces;
+    }
+
+    private void MarkInterfacesDirty(object? sender, EventArgs e)
+    {
+        lock (_gate)
+        {
+            if (!_disposed)
+            {
+                _interfacesDirty = true;
+            }
+        }
     }
 
     private IEnumerable<InterfaceRateSnapshot> SelectInterfaces(
