@@ -31,6 +31,10 @@ internal sealed class HostMonitorForm : Form
 
     private Font? _cardFont;
     private float _lastFontSize;
+    private bool _isResizing;
+    private Point _resizeStartCursor;
+    private Size _resizeStartSize;
+    private Control? _resizeCaptureControl;
 
     public Guid HostId { get; }
     public Func<HostMonitorForm, IEnumerable<Rectangle>>? SnapBoundsProvider { get; set; }
@@ -61,8 +65,14 @@ internal sealed class HostMonitorForm : Form
         _menu.Closed += (_, _) => ContextMenuClosed?.Invoke(this, EventArgs.Empty);
         ContextMenuStrip = _menu;
         _card.ContextMenuStrip = _menu;
-        MouseDown += (sender, args) => BeginMove(sender, args);
-        _card.MouseDown += (sender, args) => BeginMove(sender, args);
+        MouseDown += (sender, args) => BeginMoveOrResize(sender, args);
+        _card.MouseDown += (sender, args) => BeginMoveOrResize(sender, args);
+        MouseMove += (sender, args) => HandlePointerMove(sender, args);
+        _card.MouseMove += (sender, args) => HandlePointerMove(sender, args);
+        MouseUp += (_, args) => EndResize(args);
+        _card.MouseUp += (_, args) => EndResize(args);
+        MouseLeave += (_, _) => Cursor = Cursors.SizeAll;
+        _card.MouseLeave += (_, _) => _card.Cursor = Cursors.SizeAll;
         Controls.Add(_card);
         UpdateCardScale();
         UpdateRoundedRegion();
@@ -142,24 +152,86 @@ internal sealed class HostMonitorForm : Form
         }
     }
 
-    private void BeginMove(object? sender, MouseEventArgs args)
+    private void BeginMoveOrResize(object? sender, MouseEventArgs args)
     {
         if (args.Button != MouseButtons.Left || WindowState == FormWindowState.Maximized)
         {
             return;
         }
 
-        var clientPoint = sender is Control control
-            ? PointToClient(control.PointToScreen(args.Location))
-            : args.Location;
+        var clientPoint = PointFromMouseEvent(sender, args);
         if (IsInResizeGrip(clientPoint))
         {
+            BeginResize(sender);
             return;
         }
 
         ReleaseCapture();
         SendMessage(Handle, WmNclButtonDown, HtCaption, 0);
     }
+
+    private void HandlePointerMove(object? sender, MouseEventArgs args)
+    {
+        if (_isResizing)
+        {
+            ResizeFromGrip();
+            return;
+        }
+
+        UpdatePointerCursor(sender, args);
+    }
+
+    private void BeginResize(object? sender)
+    {
+        _isResizing = true;
+        _resizeStartCursor = Control.MousePosition;
+        _resizeStartSize = Size;
+        _resizeCaptureControl = sender as Control ?? this;
+        _resizeCaptureControl.Capture = true;
+        Cursor = Cursors.SizeNWSE;
+        _card.Cursor = Cursors.SizeNWSE;
+    }
+
+    private void ResizeFromGrip()
+    {
+        var cursor = Control.MousePosition;
+        var width = Math.Max(MinimumSize.Width, _resizeStartSize.Width + cursor.X - _resizeStartCursor.X);
+        var height = Math.Max(MinimumSize.Height, _resizeStartSize.Height + cursor.Y - _resizeStartCursor.Y);
+        Size = new Size(width, height);
+    }
+
+    private void EndResize(MouseEventArgs args)
+    {
+        if (args.Button != MouseButtons.Left || !_isResizing)
+        {
+            return;
+        }
+
+        _isResizing = false;
+        if (_resizeCaptureControl is not null)
+        {
+            _resizeCaptureControl.Capture = false;
+            _resizeCaptureControl = null;
+        }
+
+        Cursor = Cursors.SizeAll;
+        _card.Cursor = Cursors.SizeAll;
+    }
+
+    private void UpdatePointerCursor(object? sender, MouseEventArgs args)
+    {
+        var cursor = IsInResizeGrip(PointFromMouseEvent(sender, args))
+            ? Cursors.SizeNWSE
+            : Cursors.SizeAll;
+
+        Cursor = cursor;
+        _card.Cursor = cursor;
+    }
+
+    private Point PointFromMouseEvent(object? sender, MouseEventArgs args) =>
+        sender is Control control
+            ? PointToClient(control.PointToScreen(args.Location))
+            : args.Location;
 
     private nint? HitTestResizeBorder(IntPtr lParam)
     {
