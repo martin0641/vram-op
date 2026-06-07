@@ -26,7 +26,7 @@ internal sealed class HostMonitorForm : Form
         Margin = Padding.Empty,
         ShowResizeGrip = true,
         UseCompactMemoryValues = true,
-        ShowNetworkBars = false
+        UseCompactNetworkValues = true
     };
 
     private Font? _cardFont;

@@ -883,6 +883,7 @@ internal sealed class HostCard : Control
 
     public bool IsSelected { get; set; }
     public bool UseCompactMemoryValues { get; set; }
+    public bool UseCompactNetworkValues { get; set; }
     public bool ShowResizeGrip { get; set; }
     public bool ShowNetworkBars { get; set; } = true;
     public NetworkRateUnit NetworkUnit { get; set; } = NetworkRateUnit.Mbps;
@@ -982,12 +983,15 @@ internal sealed class HostCard : Control
             var network = networkRows[index];
             if (ShowNetworkBars)
             {
+                var networkValue = UseCompactNetworkValues
+                    ? NetworkRateFormatter.FormatWidgetPair(network.ReceiveBytesPerSecond, network.SendBytesPerSecond, NetworkUnit)
+                    : NetworkRateFormatter.FormatPair(network.ReceiveBytesPerSecond, network.SendBytesPerSecond, NetworkUnit);
                 DrawNetworkMetricLine(
                     e.Graphics,
                     network.Label,
                     _networkReceiveRatios[index].Display,
                     _networkSendRatios[index].Display,
-                    NetworkRateFormatter.FormatPair(network.ReceiveBytesPerSecond, network.SendBytesPerSecond, NetworkUnit),
+                    networkValue,
                     y + lineHeight * (4 + index),
                     lineHeight);
             }
@@ -1164,7 +1168,8 @@ internal sealed class HostCard : Control
     private void DrawNetworkMetricLine(Graphics graphics, string label, double receiveRatio, double sendRatio, string value, int y, int lineHeight)
     {
         var labelWidth = Math.Max(52, TextRenderer.MeasureText("NIC4", Font).Width + 4);
-        var valueWidth = Math.Min(Math.Max(112, Width / 3), Math.Max(112, Width - labelWidth - 110));
+        var measuredValueWidth = TextRenderer.MeasureText(value, Font).Width + 6;
+        var valueWidth = Math.Min(Math.Max(112, measuredValueWidth), Math.Max(112, Width - labelWidth - 80));
         var left = Math.Max(12, Font.Height);
         var barHeight = Math.Max(8, Font.Height / 2);
         var labelRect = new Rectangle(left, y, labelWidth, lineHeight);
