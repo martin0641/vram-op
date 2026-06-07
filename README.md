@@ -17,6 +17,7 @@ Author/contact: Martin / `martin0641@gmail.com`
 - TLS 1.3 HTTPS listener with basic auth and certificate pinning for remote telemetry.
 - Clickable remote-host pills, configurable theme color swatches, and AES-256-GCM encrypted settings import/export.
 - Self-contained win-x64 MSI installer, no separate .NET Desktop Runtime install required.
+- Automatic GitHub Releases update checks with MSI upgrade handoff.
 - Tray icon behavior for long-running monitoring without Remote Desktop overhead.
 
 ## Screenshots
@@ -37,13 +38,13 @@ Tagged releases publish installer assets to the GitHub Releases page. For v6, do
 The v6 installer built by this repo is:
 
 ```text
-dist\VRAMVue-Setup-v6.0.4-win-x64.msi
+dist\VRAMVue-Setup-v6.0.6-win-x64.msi
 ```
 
 For users who want to unzip and run `VramVue.exe` directly, use the portable self-contained build:
 
 ```text
-dist\VRAMVue-Portable-v6.0.4-win-x64.zip
+dist\VRAMVue-Portable-v6.0.6-win-x64.zip
 ```
 
 The GitHub release notes include SHA-256 hashes for the actual downloadable files.
@@ -52,7 +53,7 @@ To rebuild both artifacts from source:
 
 ```powershell
 dotnet tool install --global wix --version 6.0.2
-.\scripts\Build-Msi.ps1 -Version 6.0.4
+.\scripts\Build-Msi.ps1 -Version 6.0.6
 ```
 
 The MSI installs a self-contained `VramVue.exe` under Program Files and adds a Start Menu shortcut. The portable zip contains the same self-contained executable.
@@ -60,34 +61,36 @@ The MSI installs a self-contained `VramVue.exe` under Program Files and adds a S
 ## Install, Upgrade, and Uninstall
 
 ```powershell
-msiexec /i .\dist\VRAMVue-Setup-v6.0.4-win-x64.msi
+msiexec /i .\dist\VRAMVue-Setup-v6.0.6-win-x64.msi
 ```
 
 The graphical installer includes a folder picker. Silent installs can set the same location with `INSTALLFOLDER`:
 
 ```powershell
-msiexec /i .\dist\VRAMVue-Setup-v6.0.4-win-x64.msi INSTALLFOLDER="D:\Apps\VRAM Vue\" /qn /norestart
+msiexec /i .\dist\VRAMVue-Setup-v6.0.6-win-x64.msi INSTALLFOLDER="D:\Apps\VRAM Vue\" /qn /norestart
 ```
 
 Upgrade from an older MSI:
 
 ```powershell
-msiexec /i .\dist\VRAMVue-Setup-v6.0.4-win-x64.msi
+msiexec /i .\dist\VRAMVue-Setup-v6.0.6-win-x64.msi
 ```
 
 Silent install:
 
 ```powershell
-msiexec /i .\dist\VRAMVue-Setup-v6.0.4-win-x64.msi /qn /norestart
+msiexec /i .\dist\VRAMVue-Setup-v6.0.6-win-x64.msi /qn /norestart
 ```
 
 Uninstall:
 
 ```powershell
-msiexec /x .\dist\VRAMVue-Setup-v6.0.4-win-x64.msi
+msiexec /x .\dist\VRAMVue-Setup-v6.0.6-win-x64.msi
 ```
 
 MSI upgrades remove the previous installed version and keep the existing install folder when possible. Uninstall removes the installed executable, Start Menu shortcut, installer registry entries, and empty install directory. Per-user settings are intentionally left in `%APPDATA%\VramOp` so upgrades and reinstalls keep saved hosts and preferences.
+
+VRAM Vue checks GitHub Releases automatically at startup, no more than once every 6 hours. When a newer release is available, it downloads the MSI, starts the installer upgrade, and closes the app so Windows Installer can replace files cleanly. You can also use the tray icon menu's **Check for updates** command.
 
 ## Build from Source
 

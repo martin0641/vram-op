@@ -14,6 +14,7 @@ internal sealed class MainForm : Form
     private const int MaxBarSmoothingMs = 6000;
     private const int MaxNetworkInterfaces = 4;
     private const int MaxAverageWindowMinutes = 72 * 60;
+    private static readonly TimeSpan AutomaticUpdateCheckInterval = TimeSpan.FromHours(6);
 
     private readonly AppSettings _settings;
     private readonly SystemTelemetryCollector _collector = new();
@@ -98,6 +99,7 @@ internal sealed class MainForm : Form
     private bool _updatingProcessRows;
     private bool _loadingSettingsControls;
     private bool _loadingSelectedHostNetworkControls;
+    private int _updateCheckInProgress;
     private Guid? _lastRenderedProcessHostId;
     private string _lastRenderedProcessSignature = string.Empty;
     private string _lastStatusText = string.Empty;
@@ -1467,6 +1469,7 @@ internal sealed class MainForm : Form
             await RestartServerAsync();
             await RefreshAllHostsAsync();
             StartPolling();
+            _ = CheckForUpdatesAsync(showNoUpdateMessage: false);
         };
 
         Resize += (_, _) =>
@@ -2038,6 +2041,8 @@ internal sealed class MainForm : Form
         _settings.BarSmoothingMs = imported.BarSmoothingMs;
         _settings.MonitorWindowsStayOnTop = imported.MonitorWindowsStayOnTop;
         _settings.MonitorWindowOpacityPercent = imported.MonitorWindowOpacityPercent;
+        _settings.AutoUpdateEnabled = imported.AutoUpdateEnabled;
+        _settings.LastUpdateCheckUtc = imported.LastUpdateCheckUtc;
         _settings.ConfirmTaskKills = imported.ConfirmTaskKills;
         _settings.NetworkSelectionMode = imported.NetworkSelectionMode;
         _settings.TrackedNetworkInterfaceIds = imported.TrackedNetworkInterfaceIds ?? [];
@@ -2231,6 +2236,7 @@ internal sealed class MainForm : Form
         trayMenu.Closed += (_, _) => EndContextMenuInteraction();
         trayMenu.Items.Add("Show", null, (_, _) => ShowFromTray());
         trayMenu.Items.Add("Refresh", null, async (_, _) => await RefreshAllHostsAsync());
+        trayMenu.Items.Add("Check for updates", null, async (_, _) => await CheckForUpdatesAsync(showNoUpdateMessage: true));
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add("Exit", null, (_, _) =>
         {
@@ -2243,6 +2249,101 @@ internal sealed class MainForm : Form
         _notifyIcon.Text = AppDisplayName;
         _notifyIcon.Visible = true;
         _notifyIcon.DoubleClick += (_, _) => ShowFromTray();
+    }
+
+    private async Task CheckForUpdatesAsync(bool showNoUpdateMessage)
+    {
+        if (Interlocked.Exchange(ref _updateCheckInProgress, 1) == 1)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!showNoUpdateMessage)
+            {
+                if (!_settings.AutoUpdateEnabled)
+                {
+                    return;
+                }
+
+                var now = DateTime.UtcNow;
+                if (now - _settings.LastUpdateCheckUtc < AutomaticUpdateCheckInterval)
+                {
+                    return;
+                }
+
+                _settings.LastUpdateCheckUtc = now;
+                SettingsStore.Save(_settings);
+            }
+
+            if (showNoUpdateMessage)
+            {
+                SetStatusText("Checking for updates");
+            }
+
+            var update = await AppUpdateService.CheckLatestAsync(CancellationToken.None);
+            if (update is null)
+            {
+                if (showNoUpdateMessage)
+                {
+                    MessageBox.Show(
+                        this,
+                        $"VRAM Vue {AppUpdateService.CurrentVersionText} is the latest available version.",
+                        AppDisplayName,
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                    SetStatusText($"Live telemetry - {_settings.UpdateIntervalMs:N0} ms updates");
+                }
+
+                return;
+            }
+
+            if (!Visible)
+            {
+                ShowFromTray();
+            }
+
+            var install = MessageBox.Show(
+                this,
+                $"VRAM Vue {update.TagName} is available. You are running {AppUpdateService.CurrentVersionText}.\r\n\r\nDownload and install the update now? The app will close after the installer starts.",
+                AppDisplayName,
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Information,
+                MessageBoxDefaultButton.Button1);
+            if (install != DialogResult.Yes)
+            {
+                SetStatusText($"Live telemetry - {_settings.UpdateIntervalMs:N0} ms updates");
+                return;
+            }
+
+            SetStatusText($"Downloading VRAM Vue {update.TagName}");
+            var installerPath = await AppUpdateService.DownloadInstallerAsync(update, CancellationToken.None);
+            SetStatusText($"Starting installer for VRAM Vue {update.TagName}");
+            AppUpdateService.LaunchDeferredInstaller(installerPath, Environment.ProcessId);
+            _exitRequested = true;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            if (showNoUpdateMessage)
+            {
+                MessageBox.Show(
+                    this,
+                    $"Update check failed: {ex.Message}",
+                    AppDisplayName,
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
+            else
+            {
+                SetStatusText($"Update check failed: {ex.Message}");
+            }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _updateCheckInProgress, 0);
+        }
     }
 
     private async Task RestartServerAsync()

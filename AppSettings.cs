@@ -14,6 +14,8 @@ internal sealed class AppSettings
     public int BarSmoothingMs { get; set; } = 500;
     public bool MonitorWindowsStayOnTop { get; set; } = true;
     public int MonitorWindowOpacityPercent { get; set; } = 95;
+    public bool AutoUpdateEnabled { get; set; } = true;
+    public DateTime LastUpdateCheckUtc { get; set; } = DateTime.MinValue;
     public bool ConfirmTaskKills { get; set; } = true;
     public NetworkSelectionMode NetworkSelectionMode { get; set; } = NetworkSelectionMode.Auto;
     public List<string> TrackedNetworkInterfaceIds { get; set; } = [];
