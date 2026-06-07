@@ -884,6 +884,7 @@ internal sealed class HostCard : Control
     public bool IsSelected { get; set; }
     public bool UseCompactMemoryValues { get; set; }
     public bool ShowResizeGrip { get; set; }
+    public bool ShowNetworkBars { get; set; } = true;
     public NetworkRateUnit NetworkUnit { get; set; } = NetworkRateUnit.Mbps;
 
     public int SmoothingDurationMs
@@ -979,14 +980,26 @@ internal sealed class HostCard : Control
         for (var index = 0; index < networkRows.Length; index++)
         {
             var network = networkRows[index];
-            DrawNetworkMetricLine(
-                e.Graphics,
-                network.Label,
-                _networkReceiveRatios[index].Display,
-                _networkSendRatios[index].Display,
-                NetworkRateFormatter.FormatPair(network.ReceiveBytesPerSecond, network.SendBytesPerSecond, NetworkUnit),
-                y + lineHeight * (4 + index),
-                lineHeight);
+            if (ShowNetworkBars)
+            {
+                DrawNetworkMetricLine(
+                    e.Graphics,
+                    network.Label,
+                    _networkReceiveRatios[index].Display,
+                    _networkSendRatios[index].Display,
+                    NetworkRateFormatter.FormatPair(network.ReceiveBytesPerSecond, network.SendBytesPerSecond, NetworkUnit),
+                    y + lineHeight * (4 + index),
+                    lineHeight);
+            }
+            else
+            {
+                DrawNetworkTextLine(
+                    e.Graphics,
+                    network.Label,
+                    NetworkRateFormatter.FormatWidgetPair(network.ReceiveBytesPerSecond, network.SendBytesPerSecond, NetworkUnit),
+                    y + lineHeight * (4 + index),
+                    lineHeight);
+            }
         }
 
         if (ShowResizeGrip)
@@ -1021,9 +1034,17 @@ internal sealed class HostCard : Control
         {
             if (index < networkRows.Length)
             {
-                var network = networkRows[index];
-                _networkReceiveRatios[index].SetTarget(NetworkRateFormatter.RatioToLink(network.ReceiveBytesPerSecond, network.LinkSpeedBitsPerSecond), SmoothingDurationMs);
-                _networkSendRatios[index].SetTarget(NetworkRateFormatter.RatioToLink(network.SendBytesPerSecond, network.LinkSpeedBitsPerSecond), SmoothingDurationMs);
+                if (ShowNetworkBars)
+                {
+                    var network = networkRows[index];
+                    _networkReceiveRatios[index].SetTarget(NetworkRateFormatter.RatioToLink(network.ReceiveBytesPerSecond, network.LinkSpeedBitsPerSecond), SmoothingDurationMs);
+                    _networkSendRatios[index].SetTarget(NetworkRateFormatter.RatioToLink(network.SendBytesPerSecond, network.LinkSpeedBitsPerSecond), SmoothingDurationMs);
+                }
+                else
+                {
+                    _networkReceiveRatios[index].SnapTo(0);
+                    _networkSendRatios[index].SnapTo(0);
+                }
             }
             else
             {
@@ -1124,7 +1145,7 @@ internal sealed class HostCard : Control
 
     private void DrawMetricLine(Graphics graphics, string label, double ratio, string value, int y, int lineHeight, Color color)
     {
-        var labelWidth = Math.Max(48, TextRenderer.MeasureText(label, Font).Width + 4);
+        var labelWidth = Math.Max(52, TextRenderer.MeasureText("VRAM", Font).Width + 4);
         var valueWidth = Math.Min(Math.Max(86, Width / 3), Math.Max(90, Width - labelWidth - 110));
         var left = Math.Max(12, Font.Height);
         var barHeight = Math.Max(8, Font.Height / 2);
@@ -1142,7 +1163,7 @@ internal sealed class HostCard : Control
 
     private void DrawNetworkMetricLine(Graphics graphics, string label, double receiveRatio, double sendRatio, string value, int y, int lineHeight)
     {
-        var labelWidth = Math.Max(48, TextRenderer.MeasureText(label, Font).Width + 4);
+        var labelWidth = Math.Max(52, TextRenderer.MeasureText("NIC4", Font).Width + 4);
         var valueWidth = Math.Min(Math.Max(112, Width / 3), Math.Max(112, Width - labelWidth - 110));
         var left = Math.Max(12, Font.Height);
         var barHeight = Math.Max(8, Font.Height / 2);
@@ -1155,6 +1176,17 @@ internal sealed class HostCard : Control
         DrawDuplexProgress(graphics, barRect, receiveRatio, sendRatio);
 
         var valueRect = new Rectangle(barRect.Right + 8, y, Width - barRect.Right - left - 8, lineHeight);
+        TextRenderer.DrawText(graphics, value, Font, valueRect, AppTheme.Text, TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+    }
+
+    private void DrawNetworkTextLine(Graphics graphics, string label, string value, int y, int lineHeight)
+    {
+        var labelWidth = Math.Max(52, TextRenderer.MeasureText("NIC4", Font).Width + 4);
+        var left = Math.Max(12, Font.Height);
+        var labelRect = new Rectangle(left, y, labelWidth, lineHeight);
+        TextRenderer.DrawText(graphics, label, Font, labelRect, AppTheme.MutedText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+
+        var valueRect = new Rectangle(labelRect.Right + 8, y, Width - labelRect.Right - left - 8, lineHeight);
         TextRenderer.DrawText(graphics, value, Font, valueRect, AppTheme.Text, TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
     }
 

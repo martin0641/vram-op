@@ -63,6 +63,13 @@ internal static class NetworkRateFormatter
     public static string FormatPair(double receiveBytesPerSecond, double sendBytesPerSecond, NetworkRateUnit unit) =>
         $"R {Format(receiveBytesPerSecond, unit)}/S {Format(sendBytesPerSecond, unit)}";
 
+    public static string FormatWidgetPair(double receiveBytesPerSecond, double sendBytesPerSecond, NetworkRateUnit unit)
+    {
+        var (receive, suffix) = Convert(receiveBytesPerSecond, unit);
+        var (send, _) = Convert(sendBytesPerSecond, unit);
+        return $"R {receive:N2}/{send:N2} S {suffix}";
+    }
+
     public static string Format(double bytesPerSecond, NetworkRateUnit unit)
     {
         var (value, suffix) = Convert(bytesPerSecond, unit);

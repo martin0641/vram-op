@@ -25,7 +25,8 @@ internal sealed class HostMonitorForm : Form
         IsSelected = true,
         Margin = Padding.Empty,
         ShowResizeGrip = true,
-        UseCompactMemoryValues = true
+        UseCompactMemoryValues = true,
+        ShowNetworkBars = false
     };
 
     private Font? _cardFont;
@@ -60,8 +61,8 @@ internal sealed class HostMonitorForm : Form
         _menu.Closed += (_, _) => ContextMenuClosed?.Invoke(this, EventArgs.Empty);
         ContextMenuStrip = _menu;
         _card.ContextMenuStrip = _menu;
-        MouseDown += (_, args) => BeginMove(args);
-        _card.MouseDown += (_, args) => BeginMove(args);
+        MouseDown += (sender, args) => BeginMove(sender, args);
+        _card.MouseDown += (sender, args) => BeginMove(sender, args);
         Controls.Add(_card);
         UpdateCardScale();
         UpdateRoundedRegion();
@@ -141,9 +142,17 @@ internal sealed class HostMonitorForm : Form
         }
     }
 
-    private void BeginMove(MouseEventArgs args)
+    private void BeginMove(object? sender, MouseEventArgs args)
     {
         if (args.Button != MouseButtons.Left || WindowState == FormWindowState.Maximized)
+        {
+            return;
+        }
+
+        var clientPoint = sender is Control control
+            ? PointToClient(control.PointToScreen(args.Location))
+            : args.Location;
+        if (IsInResizeGrip(clientPoint))
         {
             return;
         }
@@ -155,6 +164,11 @@ internal sealed class HostMonitorForm : Form
     private nint? HitTestResizeBorder(IntPtr lParam)
     {
         var point = PointToClient(GetPointFromLParam(lParam));
+        if (IsInResizeGrip(point))
+        {
+            return HtBottomRight;
+        }
+
         var grip = Math.Max(6, (int)Math.Round(8 * DeviceDpi / 96D));
         var left = point.X <= grip;
         var right = point.X >= ClientSize.Width - grip;
@@ -197,6 +211,15 @@ internal sealed class HostMonitorForm : Form
         }
 
         return bottom ? HtBottom : null;
+    }
+
+    private bool IsInResizeGrip(Point point)
+    {
+        var size = ScaleForDpi(34);
+        return point.X >= ClientSize.Width - size
+            && point.Y >= ClientSize.Height - size
+            && point.X <= ClientSize.Width
+            && point.Y <= ClientSize.Height;
     }
 
     private static Point GetPointFromLParam(IntPtr lParam)
